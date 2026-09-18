@@ -74,9 +74,9 @@ scores. Lower penalties are better.
 
 | Scenario | Local hard violations | Penalty | Contract overrun days | ECLO nights | Excess location-nights |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| A | 0 | 316.4 | 112 | 0 | 0 |
-| B | 0 | 110.0 | 0 | 22 | 0 |
-| C | 0 | 229.3 | 91 | 4 | 0 |
+| A | 0 | 414.4 | 126 | 0 | 0 |
+| B | 0 | 140.0 | 0 | 28 | 0 |
+| C | 0 | 326.4 | 112 | 2 | 0 |
 
 The former README's claimed `32.2` optimum used incomplete occupancy and overly
 broad sharing exemptions. Its score is not comparable with these corrected
@@ -91,11 +91,11 @@ entry point falls back to the heuristic and names that in its `solver` field.
 
 | Scenario | Proven primary penalty | Contract overrun days | ECLO nights | Excess location-nights | Contracts late |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| A | 131.6 | 42 | 0 | 0 | 5 of 14 |
-| B | 50.0 | 0 | 10 | 0 | 0 of 14 |
-| C | 44.5 | 21 | 4 | 0 | 3 of 14 |
+| A | 222.6 | 49 | 0 | 0 | 5 of 14 |
+| B | 60.0 | 0 | 12 | 0 | 0 of 14 |
+| C | 135.5 | 28 | 4 | 0 | 4 of 14 |
 
-Against the heuristic's 316.4 / 110 / 229.3 that is 58% / 55% / 81% less
+Against the heuristic's 414.4 / 140 / 326.4 that is 46% / 57% / 58% less
 penalty. No Priority-1 contract is late in any scenario, under either backend.
 Proving all three takes roughly 150 seconds on this instance.
 
@@ -116,7 +116,7 @@ infeasible degrades to the heuristic rather than raising; the report's
 cannot fit inside the declared horizon the model grows it and re-solves, which
 cannot change the optimum of an instance that already fitted, because later
 weeks only ever add penalty. A 20-week version of the public instance is
-infeasible as declared, yet still returns the same proven optimum of 131.6.
+infeasible as declared, yet still returns the same proven optimum of 222.6.
 
 The priority tie-break is anchored to `horizon_start`, not to `date.today()`.
 Anchoring on the wall clock made the emitted schedule depend on which day the

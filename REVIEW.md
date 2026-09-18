@@ -31,6 +31,7 @@ Optimisation**, starting at commit `0c85fec`.
 | IDs, eclo values, local night ranges, sequences and duplicate rows were unchecked | Malformed submissions could crash, fake workload or evade allocations | Structured hard violations, no objective for invalid submissions, nonzero CLI status |
 | RESULTS dates/scenario were ignored; earliness/hotspots were placeholders | Completion evidence and operational diagnostics were unreliable | Recompute and verify dates/overruns, infer scenario, calculate earliness and hotspots |
 | No uploaded-instance execution path | Judges could not submit the eight hidden-instance CSVs through a UI | Add a local browser app with temporary uploads, timeline, validation and ZIP downloads |
+| The `Live` cross-line closure at the interchange carried no buffer | The buffer was applied to the worked line only, then the neighbouring line's hub tunnel and platforms were added unbuffered, so a `Live` closure stopped dead at `H01`/`H02` instead of clearing two sectors beyond. The scheduler booked work inside a live-rail possession and the local validator agreed: the reference validator rejected `A065` inside `A074`'s closure at `PLAT:BET:S13:WB` in wk19 | Buffer the whole closure: carry the activity's own buffer around the cross-line hub locations too |
 
 The geometry and sharing changes deliberately make assumptions explicit. The
 problem statement combines nightly wording with weekly output and local night
@@ -73,7 +74,7 @@ one-change relabellings of `01_data` were run through `load_instance`:
 
 | Relabelling | Before | After |
 | --- | --- | --- |
-| `Live` buffer 2 -> 3 sectors | rejected: "buffer rules must match the three PS1 safety rules" | read from the CSV; closure widens 28 -> 36 locations |
+| `Live` buffer 2 -> 3 sectors | rejected: "buffer rules must match the three PS1 safety rules" | read from the CSV; closure widens 44 -> 60 locations |
 | Bounds `EB`/`WB` -> `NB`/`SB` | rejected: "invalid bound in SEC:BET:S15_S16:NB" | bounds derived from the supply table |
 | Lines `ALP`/`BET` -> `NOR`/`STH` | rejected: missing supply for a line that no longer exists | lines derived from the instance |
 | Hubs `H01`/`H02` -> `X01`/`X02` | **loaded, and silently dropped the Live cross-line closure** | interchange derived from `is_interchange` topology |
@@ -97,13 +98,13 @@ directory argument, but it remains standalone and outside the solver path.
 
 The CP-SAT backend is a large, real improvement: it proves the Section 2.5
 objective rather than approximating it, cutting the public scores from
-316.4/110/229.3 to 131.6/50/44.5. Splitting policy per scenario is the right
+414.4/140/326.4 to 222.6/60/135.5. Splitting policy per scenario is the right
 call -- A carries no ECLO variables at all, B turns planned dates into a domain
 restriction, and only C needs the per-line window. Four issues were fixed.
 
 | Issue | Why it mattered | Change |
 | --- | --- | --- |
-| A congested instance raised `INFEASIBLE` | Section 1 forbids declaring a case impossible; a 20-week version of the public instance crashed with an uncaught `RuntimeError` | Treat `horizon_weeks` as a start, not a ceiling: grow and re-solve, then fall back to the heuristic. The same instance now returns the same proven optimum, 131.6 |
+| A congested instance raised `INFEASIBLE` | Section 1 forbids declaring a case impossible; a 20-week version of the public instance crashed with an uncaught `RuntimeError` | Treat `horizon_weeks` as a start, not a ceiling: grow and re-solve, then fall back to the heuristic. The same instance now returns the same proven optimum, 222.6 |
 | The tie-break was anchored to `date.today()` | The emitted schedule depended on the day it was generated; weights moved by five orders of magnitude between dates and the top-ranked activity changed | Anchor on `horizon_start`, so a given instance always yields the same answer key |
 | Possessions per location-week were fixed at four | Denied C the extra possession the brief grants it, and silently under-models any instance whose `supply_capacity` exceeds four | Derive from the instance: nominal supply plus the scenario's own excess allowance |
 | An exclusive possession was only capped at one per group, not kept alone | The model could emit a `PM` co-sharing with three co-workers, which its own validator rejects. The public instance hides this because its only `PM` contract is `Live`, so the buffer rule happens to cover it | Enforce "alone in its possession" directly, driven by `rules.ACCESS_ROLES` |
@@ -119,8 +120,8 @@ two-week ECLO window and `ACCESS_MULTIPLIER` had reappeared across
 come from `rules.py`, which is the only module naming an access code.
 
 The web app -- the judges' live upload path -- called the heuristic, so an
-uploaded instance would have scored 316.4/110/229.3 while the repository
-advertised 131.6/50/44.5. It now reaches for the exact solver with a 90-second
+uploaded instance would have scored 414.4/140/326.4 while the repository
+advertised 222.6/60/135.5. It now reaches for the exact solver with a 90-second
 budget per scenario and falls back rather than hanging.
 
 **Still open:** OR-Tools is an undeclared dependency (no `requirements.txt` or
