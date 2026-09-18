@@ -1,0 +1,176 @@
+{
+  "instance": "01_data",
+  "ortools_version": "9.15.6755",
+  "validation": "Local validator with occupied-span closure checks for all natures",
+  "runs": [
+    {
+      "scenario": "A",
+      "backend": "heuristic",
+      "proven": false,
+      "elapsed_seconds": 1.378,
+      "priority_proven": null,
+      "priority_objective": null,
+      "feasible": true,
+      "hard_violations": [],
+      "soft_scores": {
+        "scenario": "A",
+        "overrun_days_total": 112,
+        "contracts_overrunning": 6,
+        "earliness_days_total": 105,
+        "excess_access_nights_total": 0,
+        "eclo_nights_total": 0,
+        "priority_overrun": {
+          "2": 14,
+          "3": 112
+        },
+        "priority_weighted_score": 316.4,
+        "objective_score": 316.4,
+        "formula_version": "ps1-2.5-local-v2"
+      },
+      "nights_scheduled": 192
+    },
+    {
+      "scenario": "A",
+      "backend": "exact",
+      "proven": true,
+      "elapsed_seconds": 34.746,
+      "priority_proven": false,
+      "priority_objective": 906595.0,
+      "feasible": true,
+      "hard_violations": [],
+      "soft_scores": {
+        "scenario": "A",
+        "overrun_days_total": 42,
+        "contracts_overrunning": 5,
+        "earliness_days_total": 63,
+        "excess_access_nights_total": 0,
+        "eclo_nights_total": 0,
+        "priority_overrun": {
+          "2": 7,
+          "3": 35
+        },
+        "priority_weighted_score": 131.6,
+        "objective_score": 131.6,
+        "formula_version": "ps1-2.5-local-v2"
+      },
+      "nights_scheduled": 192,
+      "selected_output": "out/optimal-a"
+    },
+    {
+      "scenario": "B",
+      "backend": "heuristic",
+      "proven": false,
+      "elapsed_seconds": 1.034,
+      "priority_proven": null,
+      "priority_objective": null,
+      "feasible": true,
+      "hard_violations": [],
+      "soft_scores": {
+        "scenario": "B",
+        "overrun_days_total": 0,
+        "contracts_overrunning": 0,
+        "earliness_days_total": 91,
+        "excess_access_nights_total": 0,
+        "eclo_nights_total": 22,
+        "priority_overrun": {},
+        "priority_weighted_score": 0.0,
+        "objective_score": 110,
+        "formula_version": "ps1-2.5-local-v2"
+      },
+      "nights_scheduled": 181
+    },
+    {
+      "scenario": "B",
+      "backend": "exact",
+      "proven": true,
+      "elapsed_seconds": 47.928,
+      "priority_proven": false,
+      "priority_objective": 12512733.0,
+      "feasible": true,
+      "hard_violations": [],
+      "soft_scores": {
+        "scenario": "B",
+        "overrun_days_total": 0,
+        "contracts_overrunning": 0,
+        "earliness_days_total": 84,
+        "excess_access_nights_total": 0,
+        "eclo_nights_total": 10,
+        "priority_overrun": {},
+        "priority_weighted_score": 0.0,
+        "objective_score": 50,
+        "formula_version": "ps1-2.5-local-v2"
+      },
+      "nights_scheduled": 187,
+      "selected_output": "out/optimal-b"
+    },
+    {
+      "scenario": "C",
+      "backend": "heuristic",
+      "proven": false,
+      "elapsed_seconds": 2.854,
+      "priority_proven": null,
+      "priority_objective": null,
+      "feasible": true,
+      "hard_violations": [],
+      "soft_scores": {
+        "scenario": "C",
+        "overrun_days_total": 91,
+        "contracts_overrunning": 5,
+        "earliness_days_total": 105,
+        "excess_access_nights_total": 0,
+        "eclo_nights_total": 4,
+        "priority_overrun": {
+          "2": 7,
+          "3": 98
+        },
+        "priority_weighted_score": 209.3,
+        "objective_score": 229.3,
+        "formula_version": "ps1-2.5-local-v2"
+      },
+      "nights_scheduled": 190
+    },
+    {
+      "scenario": "C",
+      "backend": "exact",
+      "proven": true,
+      "elapsed_seconds": 56.243,
+      "priority_proven": false,
+      "priority_objective": 1580912.0,
+      "feasible": true,
+      "hard_violations": [],
+      "soft_scores": {
+        "scenario": "C",
+        "overrun_days_total": 21,
+        "contracts_overrunning": 3,
+        "earliness_days_total": 49,
+        "excess_access_nights_total": 0,
+        "eclo_nights_total": 4,
+        "priority_overrun": {
+          "3": 21
+        },
+        "priority_weighted_score": 24.5,
+        "objective_score": 44.5,
+        "formula_version": "ps1-2.5-local-v2"
+      },
+      "nights_scheduled": 190,
+      "selected_output": "out/optimal-c"
+    }
+  ],
+  "verification": {
+    "tests_passed": 59,
+    "test_commands": [
+      "PYTHONPATH=src:tests .venv/bin/python -m unittest test_scheduling test_portability test_change_control test_web -v",
+      "PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_scenarios.py' -v"
+    ],
+    "independent_closure_audit": {
+      "A": 0,
+      "B": 0,
+      "C": 0
+    },
+    "refreshed_archives": [
+      "out/optimal-b/Archive.zip",
+      "out/optimal-c/Archive.zip"
+    ],
+    "reference_validator_available": false
+  }
+}

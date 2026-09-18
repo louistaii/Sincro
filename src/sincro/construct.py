@@ -1,8 +1,8 @@
 """Deterministic greedy construction with full workload delivery.
 
-Buffered possessions use conservative weekly exclusion checks. Buffer-free
-possessions may reuse a location in different weekly slots. This is a heuristic,
-not a proof of optimality or of reference-validator equivalence.
+All possessions use conservative weekly closure checks, including occupied
+locations with no extra buffer. Overlapping activities must legally co-share.
+This is a heuristic, not a proof of optimality or reference-validator equivalence.
 """
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ class Geometry:
     def __init__(self, inst: Instance):
         self.spans = {aid: set(inst.span_locations(a)) for aid, a in inst.activities.items()}
         self.feet = {aid: inst.closure_footprint(a) for aid, a in inst.activities.items()}
-        self.exclusion = {aid: inst.has_exclusion(a) for aid, a in inst.activities.items()}
         self.kinds = {aid: inst.contracts[a.contract_number].access_type for aid, a in inst.activities.items()}
 
 
@@ -54,8 +53,8 @@ class Week:
     def _buffers_ok(self, aid: str, group: int) -> bool:
         for gi, members in enumerate(self.groups):
             for other in members:
-                if not (self.geo.exclusion[aid] or self.geo.exclusion[other]):
-                    continue
+                # Zero buffer still closes the occupied span. Local night
+                # numbers do not waive another possession's weekly closure.
                 if self.geo.feet[aid] & self.geo.feet[other]:
                     if gi != group or not (self.geo.spans[aid] & self.geo.spans[other]):
                         return False

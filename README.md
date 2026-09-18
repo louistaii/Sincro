@@ -118,7 +118,15 @@ entry point falls back to the heuristic and names that in its `solver` field.
 
 Against the heuristic's 316.4 / 110 / 229.3 that is 58% / 55% / 81% less
 penalty. No Priority-1 contract is late in any scenario, under either backend.
-Proving all three takes roughly 150 seconds on this instance.
+The [recorded comparison](out/algorithm-results.json) includes measured solve
+times, proof status, and local validation results for both backends in A/B/C.
+
+The schedules were regenerated after fixing the A037/A061 closure conflict at
+`PLAT:BET:S15:EB`. Buffer-free work still closes its occupied span: overlapping
+activities must use a legal shared possession or different weeks. The same
+check now applies in the heuristic, exact model, and validator for every
+scenario. The primary penalties above remain achievable with this correction;
+the priority completion tie-break is time-limited and is not proven optimal.
 
 ### Which solver runs when
 
@@ -234,11 +242,11 @@ These must be checked against the reference validator when it is supplied:
 2. A sector-to-sector span books every traversed sector and every platform,
    **including both end platforms**. Platform endpoints and reversed routes are
    supported. Non-live (Others) has no closure beyond its occupied span.
-3. Buffered possessions use conservative **weekly** footprint checks. Different
-   buffer-free possessions may occupy the same location on separate weekly
-   slots, subject to supply. There is no global calendar-night field in the
-   published output; `access_night` is local to contract/type/week and is not
-   used to infer simultaneous nights across different contracts.
+3. All possessions use conservative **weekly** closure-footprint checks,
+   including the occupied span of buffer-free work. Activities with overlapping
+   footprints must legally co-share or use different weeks. There is no global
+   calendar-night field in the published output; `access_night` is local to
+   contract/type/week and cannot exempt separate groups from closure checks.
 4. Co-sharing exempts a conflicting pair only when they actually share a
    location and have matching groups at every common occupied location. A
    group label reused on disjoint locations does not waive their buffers.

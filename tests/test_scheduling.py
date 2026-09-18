@@ -1,5 +1,6 @@
 """Adversarial fixtures for the hard rules, not just solver self-validation."""
 import csv
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -7,7 +8,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from sincro.construct import SchedulingError, construct, objective, solve
+from sincro.construct import SchedulingError, Week, construct, objective, solve
 from sincro.emit import emit, write_submission
 from sincro.instance import Activity, Contract, load_instance
 from sincro.validate import SCHEMAS, validate
@@ -45,6 +46,14 @@ def candidate(inst, rows, labels=None):
         placements.append((aid, seq[aid], week, eclo, night))
         groups[(aid, week)] = labels[i] if labels is not None else i
     return {'placements': placements, 'finish_week': fin, 'group_of': groups, 'unfinished': {}}
+
+
+def closure_pair(kind='C'):
+    """The reported boundary-platform clash, with one access per activity."""
+    acts = [replace(PUBLIC.activities[aid], total_accesses=1,
+                    planned_start_date=PUBLIC.week_start(8)) for aid in ('A037', 'A061')]
+    contracts = [replace(PUBLIC.contracts[a.contract_number], access_type=kind) for a in acts]
+    return instance(contracts, acts, horizon=9)
 
 
 class SubmissionTests(unittest.TestCase):
@@ -127,15 +136,36 @@ class SubmissionTests(unittest.TestCase):
         inst = instance([contract('C1', kind='PM'), contract('C2', kind='PM'), contract('C3', kind='PM')],
                         [activity('A1', 'C1'), activity('A2', 'C2'), activity('A3', 'C3')], capacity=1)
         rows = [(aid, 1, 0, 1) for aid in inst.activities]
-        for scenario, feasible in [('A', False), ('B', True), ('C', False)]:
+        for scenario, capacity_violation in [('A', True), ('B', False), ('C', True)]:
             report = self.publish(inst, rows, scenario)
-            self.assertEqual(report['feasible'], feasible, report)
+            self.assertEqual('capacity' in self.rules(report), capacity_violation, report)
+            self.assertIn('closure', self.rules(report))
             self.assertEqual(report['soft_scores']['excess_access_nights_total'], 6)
         report = self.publish(inst, rows, 'B', labels=[0, 0, 0])
         self.assertIn('mix', self.rules(report))
-        inst = instance([contract(kind='PM'), contract('C2', kind='PM')],
-                        [activity(), activity('A2', 'C2')], capacity=1)
-        self.assertTrue(self.publish(inst, rows[:2], 'C')['feasible'])
+        # One possession above zero nominal supply exercises elasticity
+        # independently of overlapping closures.
+        inst = instance(capacity=0)
+        for scenario, feasible in [('A', False), ('B', True), ('C', True)]:
+            report = self.publish(inst, rows[:1], scenario)
+            self.assertEqual(report['feasible'], feasible, report)
+            self.assertEqual(report['soft_scores']['excess_access_nights_total'], 3)
+
+    def test_buffer_free_boundary_platform_requires_co_sharing_in_every_scenario(self):
+        inst = closure_pair()
+        rows = [('A037', 8, 0, 1), ('A061', 8, 0, 2)]
+        for scenario in 'ABC':
+            with self.subTest(scenario=scenario):
+                report = self.publish(inst, rows, scenario)
+                closures = [v for v in report['hard_violations'] if v['rule'] == 'closure']
+                self.assertEqual(len(closures), 1, report)
+                for detail in ('wk8', 'A037', 'A061', 'PLAT:BET:S15:EB'):
+                    self.assertIn(detail, closures[0]['detail'])
+                self.assertNotIn('objective_score', report['soft_scores'])
+                shared = self.publish(inst, rows, scenario, labels=[0, 0])
+                self.assertTrue(shared['feasible'], shared)
+                separate_weeks = self.publish(inst, [('A037', 8, 0, 1), ('A061', 9, 0, 2)], scenario)
+                self.assertTrue(separate_weeks['feasible'], separate_weeks)
 
     def test_pc_plus_c_shares_one_slot_but_two_pcs_do_not(self):
         inst = instance([contract(kind='PC'), contract('C2')], [activity(), activity('A2', 'C2')], capacity=1)
@@ -210,6 +240,23 @@ class SubmissionTests(unittest.TestCase):
 
 
 class ConstructionTests(unittest.TestCase):
+    def test_buffer_free_closure_cannot_be_bypassed_by_extra_capacity(self):
+        for scenario, extra in [('A', 0), ('B', None), ('C', 1)]:
+            for kind in ('C', 'PM'):
+                with self.subTest(scenario=scenario, kind=kind):
+                    inst = closure_pair(kind)
+                    week = Week(inst, 8, extra_capacity=extra)
+                    self.assertIsNotNone(week.try_place('A037'))
+                    second = week.try_place('A061')
+                    if kind == 'C':
+                        self.assertIsNotNone(second)
+                        self.assertEqual(week.group_of['A037'], week.group_of['A061'])
+                    else:
+                        self.assertIsNone(second)
+                    result, _ = construct(inst, scenario, extra_capacity=extra)
+                    weeks = {aid: week for aid, _, week, _, _ in result['placements']}
+                    self.assertEqual(weeks['A037'] == weeks['A061'], kind == 'C')
+
     def test_inclusive_and_reversed_spans_and_platform_only_work(self):
         inst = instance()
         self.assertEqual(set(inst.span_locations(activity())), {LOC, 'PLAT:ALP:S01:EB', 'PLAT:ALP:S02:EB'})
@@ -270,6 +317,25 @@ class ConstructionTests(unittest.TestCase):
                     self.assertEqual(set(p.name for p in (Path(tmp)/scenario).iterdir()), set(SCHEMAS))
                     if scenario == 'B':
                         self.assertEqual(report['soft_scores']['overrun_days_total'], 0)
+
+
+@unittest.skipUnless(importlib.util.find_spec('ortools'), 'OR-Tools is not installed')
+class ExactClosureTests(unittest.TestCase):
+    def test_each_policy_requires_a_legal_shared_possession_at_the_boundary(self):
+        from ortools.sat.python import cp_model
+        from sincro.optimal import POLICIES, _build
+
+        for scenario in 'ABC':
+            for kind, second_group, feasible in [('C', 1, False), ('C', 0, True), ('PM', 0, False)]:
+                with self.subTest(scenario=scenario, kind=kind, second_group=second_group):
+                    inst = closure_pair(kind)
+                    model, _, _, parts = _build(inst, POLICIES[scenario], 9, inst.horizon_start)
+                    model.add(parts['normal']['A037', 8, 0] == 1)
+                    model.add(parts['normal']['A061', 8, second_group] == 1)
+                    solver = cp_model.CpSolver()
+                    solver.parameters.max_time_in_seconds = 10
+                    status = solver.solve(model)
+                    self.assertEqual(status, cp_model.OPTIMAL if feasible else cp_model.INFEASIBLE)
 
 
 if __name__ == '__main__':

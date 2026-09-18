@@ -242,8 +242,9 @@ def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.
     # ---- buffers and closures (rule 4) ----
     for i, a in enumerate(aids):
         for b in aids[i + 1:]:
-            buffered = inst.has_exclusion(inst.activities[a]) or inst.has_exclusion(inst.activities[b])
-            if not (buffered and foot[a] & foot[b]):
+            # Every occupied span is a closure, even for buffer-free work.
+            # Coincident work must share a legal possession in A, B and C.
+            if not foot[a] & foot[b]:
                 continue
             for w in weeks:
                 if not span[a] & span[b]:

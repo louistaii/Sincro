@@ -161,9 +161,8 @@ def validate(inst: Instance, sub_dir: str | Path, scenario: str | None = None) -
         ordered = sorted(acts)
         for i, x in enumerate(ordered):
             for y in ordered[i + 1:]:
-                # Buffer-free possessions may reuse a location on different nights.
-                if not (inst.has_exclusion(inst.activities[x]) or inst.has_exclusion(inst.activities[y])):
-                    continue
+                # A zero buffer does not remove the occupied span's closure.
+                # Separate local night indices are not a co-sharing exemption.
                 clash = feet[x] & feet[y]
                 if not clash:
                     continue
