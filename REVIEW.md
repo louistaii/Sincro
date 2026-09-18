@@ -1,3 +1,27 @@
+# Current scoring and optimisation update
+
+The historical review below used activity-finish lateness. The organiser's
+reported A score of **1028.3** instead matches charging all activity weights
+against their contract's final completion. The solver, heuristic, analysis,
+and local validator now consistently use that inferred contract-level objective.
+The old activity metric remains a separate diagnostic; the original brief is
+unchanged. The organiser validator is inaccessible, so equivalence is not proven:
+previous C scores **578.6** locally versus the reported **576.8** externally.
+
+The revised exact model reaches **A 1028.3 / B 60.0 / C 542.4** with no local hard
+violations. C retains 28 total contract-delay days, now across three contracts,
+using six ECLO nights. A/B are unchanged. The local primary values are proven at
+30 weeks and A/C were independently checked at 60 weeks; these claims supersede
+the old 222.6 / 60 / 135.5 figures below.
+
+Redundant possession labels were removed from production solves, preserving the
+same closure constraints. Tests compare compact and expanded models on sharing,
+workfront, exclusivity, buffer, zero-supply and protected-night cases. Reports now
+include objective bounds and proof scope, and export checks solver/validator score
+agreement before publication. No organiser validation attempts were consumed.
+
+---
+
 # Review of claude/railway-track-access-napyo6
 
 Reviewed against the supplied **Problem Statement 1 — Railway Track Access

@@ -18,22 +18,25 @@ from sincro.validate import validate
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
     "A": {
-        "objective_score": 222.6,
+        "objective_score": 1028.3,
         "overrun_days_total": 49,
+        "contracts_overrunning": 5,
         "excess_access_nights_total": 0,
         "eclo_nights_total": 0,
     },
     "B": {
         "objective_score": 60,
         "overrun_days_total": 0,
+        "contracts_overrunning": 0,
         "excess_access_nights_total": 0,
         "eclo_nights_total": 12,
     },
     "C": {
-        "objective_score": 135.5,
+        "objective_score": 542.4,
         "overrun_days_total": 28,
+        "contracts_overrunning": 3,
         "excess_access_nights_total": 0,
-        "eclo_nights_total": 4,
+        "eclo_nights_total": 6,
     },
 }
 
@@ -147,22 +150,20 @@ class PriorityCalculationTests(unittest.TestCase):
 @unittest.skipUnless(importlib.util.find_spec("ortools"), "OR-Tools is not installed")
 class ExactSolverTests(unittest.TestCase):
     def test_all_scenarios_are_proven_optimal(self) -> None:
-        from sincro.optimal import (
-            solve_scenario_a,
-            solve_scenario_b,
-            solve_scenario_c,
-        )
+        from sincro.optimal import solve_exact
 
         instance = load_instance(ROOT / "01_data")
         cases = (
-            ("A", solve_scenario_a, 2226.0, 192),
-            ("B", solve_scenario_b, 600.0, 186),
-            ("C", solve_scenario_c, 1355.0, 190),
+            ("A", 10283.0, 192),
+            ("B", 600.0, 186),
+            ("C", 5424.0, 189),
         )
-        for scenario, solve, expected_objective, expected_nights in cases:
+        for scenario, expected_objective, expected_nights in cases:
             with self.subTest(scenario=scenario):
-                result = solve(instance)
+                result = solve_exact(instance, scenario, secondary_seconds=1)
                 self.assertEqual(result["objective"], expected_objective)
+                self.assertTrue(result["proven"])
+                self.assertEqual(result["best_bound"], expected_objective)
                 self.assertGreater(result["priority_objective"], 0)
                 self.assertEqual(len(result["placements"]), expected_nights)
                 self.assertEqual(len(result["finish_week"]), len(instance.activities))
@@ -206,7 +207,7 @@ class ExactSolverPolicyTests(unittest.TestCase):
         self.assertGreater(result["horizon_weeks"], 20)
         # The declared horizon was an artificial cap, so the true optimum is
         # unchanged by lifting it.
-        self.assertEqual(result["objective"], 2226.0)
+        self.assertEqual(result["objective"], 10283.0)
         self.assertEqual(len(result["finish_week"]), len(squeezed.activities))
         # A tie-break that runs out of budget still returns the proven
         # schedule, so it must report that schedule's own priority value

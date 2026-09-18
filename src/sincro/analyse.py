@@ -94,26 +94,18 @@ def earliest_schedule(inst: Instance, eclo: bool) -> dict[str, tuple[int, int]]:
 
 def score_from_schedule(inst: Instance, sched: dict[str, tuple[int, int]],
                         use_week_end: bool = True) -> dict:
-    """Priority-weighted overrun score for a given (start, finish) assignment."""
+    """Price contract completion, retaining activity completion as a diagnostic."""
     per_activity = []
     per_contract_finish: dict[str, int] = {}
     tier_days = defaultdict(int)
     total = 0.0
+    activity_total = 0.0
 
     for aid, (_, fin) in sched.items():
         a = inst.activities[aid]
-        c = inst.contracts[a.contract_number]
-        date = inst.week_end(fin) if use_week_end else inst.week_start(fin)
-        days = max(0, (date - c.planned_completion_date).days)
-        per_contract_finish[c.contract_number] = max(
-            per_contract_finish.get(c.contract_number, 0), fin
+        per_contract_finish[a.contract_number] = max(
+            per_contract_finish.get(a.contract_number, 0), fin
         )
-        if days:
-            w = CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority])
-            total += w * days
-            tier_days[c.contract_priority] += days
-            per_activity.append((aid, c.contract_number, c.contract_priority,
-                                 a.activity_priority, days, w * days))
 
     contract_overrun = {}
     for cn, fin in per_contract_finish.items():
@@ -121,8 +113,22 @@ def score_from_schedule(inst: Instance, sched: dict[str, tuple[int, int]],
         date = inst.week_end(fin) if use_week_end else inst.week_start(fin)
         contract_overrun[cn] = max(0, (date - c.planned_completion_date).days)
 
+    for aid, (_, fin) in sched.items():
+        a = inst.activities[aid]
+        c = inst.contracts[a.contract_number]
+        w = CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority])
+        date = inst.week_end(fin) if use_week_end else inst.week_start(fin)
+        activity_total += w * max(0, (date - c.planned_completion_date).days)
+        days = contract_overrun[a.contract_number]
+        if days:
+            total += w * days
+            tier_days[c.contract_priority] += days
+            per_activity.append((aid, c.contract_number, c.contract_priority,
+                                 a.activity_priority, days, w * days))
+
     return {
         "priority_weighted_score": round(total, 1),
+        "activity_finish_weighted_score": round(activity_total, 1),
         "priority_overrun": dict(sorted(tier_days.items())),
         "overrun_days_total": sum(contract_overrun.values()),
         "contracts_overrunning": sum(1 for v in contract_overrun.values() if v),

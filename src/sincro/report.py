@@ -53,12 +53,12 @@ def main(data_dir: str = "01_data") -> None:
         beyond = [aid for aid, (_, f) in sched.items() if f > H]
         print(f"\n  {label}")
         print(f"    priority_weighted_score (floor) : {sc['priority_weighted_score']:,.1f}")
-        print(f"    priority_overrun (activity-days): {sc['priority_overrun']}")
+        print(f"    priority_overrun (contract-days per activity): {sc['priority_overrun']}")
         print(f"    overrun_days_total (contract)   : {sc['overrun_days_total']}")
         print(f"    contracts_overrunning           : {sc['contracts_overrunning']}/{len(inst.contracts)}")
         print(f"    activities finishing past wk {H}   : {len(beyond)} {sorted(beyond)}")
         if not eclo and sc["overrunning_activities"]:
-            print("    worst offenders (activity, contract, Ctier, Aprio, days, cost):")
+            print("    largest contract-delay contributions (activity, contract, Ctier, Aprio, days, cost):")
             for row in sc["overrunning_activities"][:8]:
                 print(f"       {row[0]}  {row[1]}  P{row[2]}  a{row[3]}  {row[4]:3d}d  {row[5]:9,.1f}")
 

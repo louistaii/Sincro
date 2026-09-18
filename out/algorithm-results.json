@@ -1,41 +1,74 @@
 {
   "instance": "01_data",
   "ortools_version": "9.15.6755",
-  "validation": "Local validator with occupied-span closures, buffered cross-line Live closures, and shared possession access nights",
-  "runs": [
+  "python_version": "3.11.5",
+  "scoring": {
+    "formula_version": "organiser-inferred-contract-v3",
+    "delay": "Sum activity contract_priority_weight * activity_multiplier * final_contract_overrun_days",
+    "organiser_reported_previous_scores": {
+      "A": 1028.3,
+      "B": 60.0,
+      "C": 576.8
+    },
+    "c_discrepancy": "Previous checked-in C rescored as 578.6; organiser reported 576.8. Validator inaccessible; equivalence remains unverified.",
+    "organiser_validation_attempts_used": 0
+  },
+  "previous_artifacts_rescored": [
     {
       "scenario": "A",
       "backend": "heuristic",
-      "proven": false,
-      "elapsed_seconds": 1.437,
-      "priority_proven": null,
-      "priority_objective": null,
-      "feasible": true,
-      "hard_violations": [],
-      "soft_scores": {
-        "scenario": "A",
-        "overrun_days_total": 98,
-        "contracts_overrunning": 5,
-        "earliness_days_total": 112,
-        "excess_access_nights_total": 0,
-        "eclo_nights_total": 0,
-        "priority_overrun": {
-          "2": 21,
-          "3": 91
-        },
-        "priority_weighted_score": 381.5,
-        "objective_score": 381.5,
-        "formula_version": "ps1-2.5-local-v2"
-      },
-      "nights_scheduled": 192
+      "score": 1702.4,
+      "contract_overrun_days": 98,
+      "contracts_late": 5,
+      "eclo_nights": 0
     },
     {
       "scenario": "A",
       "backend": "exact",
-      "proven": true,
-      "elapsed_seconds": 39.971,
-      "priority_proven": false,
-      "priority_objective": 906796.0,
+      "score": 1028.3,
+      "contract_overrun_days": 49,
+      "contracts_late": 5,
+      "eclo_nights": 0
+    },
+    {
+      "scenario": "B",
+      "backend": "heuristic",
+      "score": 100,
+      "contract_overrun_days": 0,
+      "contracts_late": 0,
+      "eclo_nights": 20
+    },
+    {
+      "scenario": "B",
+      "backend": "exact",
+      "score": 60,
+      "contract_overrun_days": 0,
+      "contracts_late": 0,
+      "eclo_nights": 12
+    },
+    {
+      "scenario": "C",
+      "backend": "heuristic",
+      "score": 1285.4,
+      "contract_overrun_days": 84,
+      "contracts_late": 5,
+      "eclo_nights": 2
+    },
+    {
+      "scenario": "C",
+      "backend": "exact",
+      "score": 578.6,
+      "contract_overrun_days": 28,
+      "contracts_late": 4,
+      "eclo_nights": 4
+    }
+  ],
+  "runs": [
+    {
+      "scenario": "A",
+      "backend": "exact",
+      "elapsed_seconds": 3.506,
+      "selected_output": "out/optimal-a",
       "feasible": true,
       "hard_violations": [],
       "soft_scores": {
@@ -46,23 +79,91 @@
         "excess_access_nights_total": 0,
         "eclo_nights_total": 0,
         "priority_overrun": {
-          "2": 14,
-          "3": 35
+          "2": 70,
+          "3": 161
         },
-        "priority_weighted_score": 222.6,
-        "objective_score": 222.6,
-        "formula_version": "ps1-2.5-local-v2"
+        "priority_weighted_score": 1028.3,
+        "activity_finish_weighted_score": 222.6,
+        "objective_score": 1028.3,
+        "formula_version": "organiser-inferred-contract-v3"
       },
-      "nights_scheduled": 192,
-      "selected_output": "out/optimal-a"
+      "optimisation": {
+        "proven": true,
+        "objective": 1028.3,
+        "lower_bound": 1028.3,
+        "absolute_gap": 0.0,
+        "horizon_weeks": 30,
+        "primary_seconds": 0.986276,
+        "priority_proven": true,
+        "scope": "local model and reported horizon; organiser score inferred from reported results"
+      },
+      "solver": "exact",
+      "nights_scheduled": 192
+    },
+    {
+      "scenario": "A",
+      "backend": "heuristic",
+      "elapsed_seconds": 5.567,
+      "selected_output": "out/A",
+      "feasible": true,
+      "hard_violations": [],
+      "soft_scores": {
+        "scenario": "A",
+        "overrun_days_total": 119,
+        "contracts_overrunning": 6,
+        "earliness_days_total": 84,
+        "excess_access_nights_total": 0,
+        "eclo_nights_total": 0,
+        "priority_overrun": {
+          "2": 84,
+          "3": 287
+        },
+        "priority_weighted_score": 1346.8,
+        "activity_finish_weighted_score": 796.6,
+        "objective_score": 1346.8,
+        "formula_version": "organiser-inferred-contract-v3"
+      },
+      "solver": "heuristic",
+      "nights_scheduled": 192
+    },
+    {
+      "scenario": "B",
+      "backend": "exact",
+      "elapsed_seconds": 32.261,
+      "selected_output": "out/optimal-b",
+      "feasible": true,
+      "hard_violations": [],
+      "soft_scores": {
+        "scenario": "B",
+        "overrun_days_total": 0,
+        "contracts_overrunning": 0,
+        "earliness_days_total": 77,
+        "excess_access_nights_total": 0,
+        "eclo_nights_total": 12,
+        "priority_overrun": {},
+        "priority_weighted_score": 0.0,
+        "activity_finish_weighted_score": 0.0,
+        "objective_score": 60,
+        "formula_version": "organiser-inferred-contract-v3"
+      },
+      "optimisation": {
+        "proven": true,
+        "objective": 60,
+        "lower_bound": 60.0,
+        "absolute_gap": 0.0,
+        "horizon_weeks": 30,
+        "primary_seconds": 1.6533440000000001,
+        "priority_proven": false,
+        "scope": "local model and reported horizon; organiser score inferred from reported results"
+      },
+      "solver": "exact",
+      "nights_scheduled": 186
     },
     {
       "scenario": "B",
       "backend": "heuristic",
-      "proven": false,
-      "elapsed_seconds": 1.765,
-      "priority_proven": null,
-      "priority_objective": null,
+      "elapsed_seconds": 3.172,
+      "selected_output": "out/B",
       "feasible": true,
       "hard_violations": [],
       "soft_scores": {
@@ -74,122 +175,90 @@
         "eclo_nights_total": 20,
         "priority_overrun": {},
         "priority_weighted_score": 0.0,
+        "activity_finish_weighted_score": 0.0,
         "objective_score": 100,
-        "formula_version": "ps1-2.5-local-v2"
+        "formula_version": "organiser-inferred-contract-v3"
       },
+      "solver": "heuristic",
       "nights_scheduled": 182
     },
     {
-      "scenario": "B",
-      "backend": "exact",
-      "proven": true,
-      "elapsed_seconds": 66.581,
-      "priority_proven": false,
-      "priority_objective": 12760809.0,
-      "feasible": true,
-      "hard_violations": [],
-      "soft_scores": {
-        "scenario": "B",
-        "overrun_days_total": 0,
-        "contracts_overrunning": 0,
-        "earliness_days_total": 56,
-        "excess_access_nights_total": 0,
-        "eclo_nights_total": 12,
-        "priority_overrun": {},
-        "priority_weighted_score": 0.0,
-        "objective_score": 60,
-        "formula_version": "ps1-2.5-local-v2"
-      },
-      "nights_scheduled": 186,
-      "selected_output": "out/optimal-b"
-    },
-    {
-      "scenario": "C",
-      "backend": "heuristic",
-      "proven": false,
-      "elapsed_seconds": 2.598,
-      "priority_proven": null,
-      "priority_objective": null,
-      "feasible": true,
-      "hard_violations": [],
-      "soft_scores": {
-        "scenario": "C",
-        "overrun_days_total": 84,
-        "contracts_overrunning": 5,
-        "earliness_days_total": 112,
-        "excess_access_nights_total": 0,
-        "eclo_nights_total": 2,
-        "priority_overrun": {
-          "2": 14,
-          "3": 84
-        },
-        "priority_weighted_score": 283.5,
-        "objective_score": 293.5,
-        "formula_version": "ps1-2.5-local-v2"
-      },
-      "nights_scheduled": 191
-    },
-    {
       "scenario": "C",
       "backend": "exact",
-      "proven": true,
-      "elapsed_seconds": 128.363,
-      "priority_proven": false,
-      "priority_objective": 1621055.0,
+      "elapsed_seconds": 34.767,
+      "selected_output": "out/optimal-c",
       "feasible": true,
       "hard_violations": [],
       "soft_scores": {
         "scenario": "C",
         "overrun_days_total": 28,
-        "contracts_overrunning": 4,
-        "earliness_days_total": 28,
+        "contracts_overrunning": 3,
+        "earliness_days_total": 77,
         "excess_access_nights_total": 0,
-        "eclo_nights_total": 4,
+        "eclo_nights_total": 6,
         "priority_overrun": {
-          "2": 7,
-          "3": 21
+          "2": 35,
+          "3": 77
         },
-        "priority_weighted_score": 115.5,
-        "objective_score": 135.5,
-        "formula_version": "ps1-2.5-local-v2"
+        "priority_weighted_score": 512.4,
+        "activity_finish_weighted_score": 116.2,
+        "objective_score": 542.4,
+        "formula_version": "organiser-inferred-contract-v3"
       },
-      "nights_scheduled": 190,
-      "selected_output": "out/optimal-c"
+      "optimisation": {
+        "proven": true,
+        "objective": 542.4,
+        "lower_bound": 542.4,
+        "absolute_gap": 0.0,
+        "horizon_weeks": 30,
+        "primary_seconds": 4.070119,
+        "priority_proven": false,
+        "scope": "local model and reported horizon; organiser score inferred from reported results"
+      },
+      "solver": "exact",
+      "nights_scheduled": 189
+    },
+    {
+      "scenario": "C",
+      "backend": "heuristic",
+      "elapsed_seconds": 13.415,
+      "selected_output": "out/C",
+      "feasible": true,
+      "hard_violations": [],
+      "soft_scores": {
+        "scenario": "C",
+        "overrun_days_total": 119,
+        "contracts_overrunning": 5,
+        "earliness_days_total": 91,
+        "excess_access_nights_total": 0,
+        "eclo_nights_total": 6,
+        "priority_overrun": {
+          "2": 42,
+          "3": 273
+        },
+        "priority_weighted_score": 824.6,
+        "activity_finish_weighted_score": 640.5,
+        "objective_score": 854.6,
+        "formula_version": "organiser-inferred-contract-v3"
+      },
+      "solver": "heuristic",
+      "nights_scheduled": 189
     }
   ],
   "verification": {
-    "independent_audit": {
+    "reference_validator_available": false,
+    "horizon_60_crosscheck": {
       "A": {
-        "closure_violations": 0,
-        "split_night_violations": 0
-      },
-      "B": {
-        "closure_violations": 0,
-        "split_night_violations": 0
+        "objective": 1028.3,
+        "proven": true
       },
       "C": {
-        "closure_violations": 0,
-        "split_night_violations": 0
-      },
-      "optimal-a": {
-        "closure_violations": 0,
-        "split_night_violations": 0
-      },
-      "optimal-b": {
-        "closure_violations": 0,
-        "split_night_violations": 0
-      },
-      "optimal-c": {
-        "closure_violations": 0,
-        "split_night_violations": 0
+        "objective": 542.4,
+        "proven": true
       }
     },
-    "reference_validator_available": false,
-    "tests_passed": 59,
-    "test_commands": [
-      "PYTHONPATH=src:tests .venv/bin/python -m unittest test_scheduling test_portability test_change_control test_web -v",
-      "PYTHONPATH=src:tests .venv/bin/python -m unittest test_scenarios.ExactSolverPolicyTests test_scenarios.ExactSolverTests test_scenarios.PriorityCalculationTests test_scenarios.FallbackTests -v",
-      "PYTHONPATH=src:tests .venv/bin/python -m unittest test_scenarios.OptimalArtifactTests -v"
-    ]
+    "model_equivalence": "Expanded and compact possession models checked on 18 scenario/fixture combinations, including infeasible cases.",
+    "tests_passed": 73,
+    "test_command": "PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v"
   }
 }
