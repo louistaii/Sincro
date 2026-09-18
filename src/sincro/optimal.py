@@ -190,21 +190,34 @@ def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.
     span = {a: set(inst.span_locations(inst.activities[a])) for a in aids}
     foot = {a: inst.closure_footprint(inst.activities[a]) for a in aids}
 
-    # Co-workers of one contract sharing a possession must share its night,
-    # so co-sharing cannot disguise a workfront breach.
+    # Rule 6: a (location, week, co_share_group) possession is one access-night
+    # slot. That binds every pair sharing a location inside one possession,
+    # whatever contract each belongs to. Restricting it to co-workers of a
+    # single contract let one label span two nights, which is two possessions
+    # wearing one name: it hides a closure conflict between them and lets the
+    # capacity count below score two real possessions as one.
     for i, a in enumerate(aids):
-        ca = inst.contracts[inst.activities[a].contract_number]
+        na = inst.contracts[inst.activities[a].contract_number].max_access_per_week
         for b in aids[i + 1:]:
-            if (inst.activities[a].contract_number != inst.activities[b].contract_number
-                    or inst.activities[a].activity_type != inst.activities[b].activity_type
-                    or not span[a] & span[b]):
+            if not span[a] & span[b]:
                 continue
+            nb = inst.contracts[inst.activities[b].contract_number].max_access_per_week
             for w in weeks:
                 for g in groups:
                     together = at(a, w, g) + at(b, w, g)
-                    for n in range(1, ca.max_access_per_week + 1):
-                        m.add(night[a, w, n] - night[b, w, n] <= 2 - together)
-                        m.add(night[b, w, n] - night[a, w, n] <= 2 - together)
+                    for n in range(1, max(na, nb) + 1):
+                        va, vb = night.get((a, w, n)), night.get((b, w, n))
+                        # A night one contract cannot reach is unavailable to
+                        # the whole possession.
+                        if va is None and vb is None:
+                            continue
+                        if vb is None:
+                            m.add(va <= 2 - together)
+                        elif va is None:
+                            m.add(vb <= 2 - together)
+                        else:
+                            m.add(va - vb <= 2 - together)
+                            m.add(vb - va <= 2 - together)
 
     # ---- capacity and legal mixes (rules 5-6) ----
     excess = []

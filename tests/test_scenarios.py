@@ -18,20 +18,20 @@ from sincro.validate import validate
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
     "A": {
-        "objective_score": 131.6,
-        "overrun_days_total": 42,
+        "objective_score": 222.6,
+        "overrun_days_total": 49,
         "excess_access_nights_total": 0,
         "eclo_nights_total": 0,
     },
     "B": {
-        "objective_score": 50,
+        "objective_score": 60,
         "overrun_days_total": 0,
         "excess_access_nights_total": 0,
-        "eclo_nights_total": 10,
+        "eclo_nights_total": 12,
     },
     "C": {
-        "objective_score": 44.5,
-        "overrun_days_total": 21,
+        "objective_score": 135.5,
+        "overrun_days_total": 28,
         "excess_access_nights_total": 0,
         "eclo_nights_total": 4,
     },
@@ -155,9 +155,9 @@ class ExactSolverTests(unittest.TestCase):
 
         instance = load_instance(ROOT / "01_data")
         cases = (
-            ("A", solve_scenario_a, 1316.0, 192),
-            ("B", solve_scenario_b, 500.0, 187),
-            ("C", solve_scenario_c, 445.0, 190),
+            ("A", solve_scenario_a, 2226.0, 192),
+            ("B", solve_scenario_b, 600.0, 186),
+            ("C", solve_scenario_c, 1355.0, 190),
         )
         for scenario, solve, expected_objective, expected_nights in cases:
             with self.subTest(scenario=scenario):
@@ -206,7 +206,7 @@ class ExactSolverPolicyTests(unittest.TestCase):
         self.assertGreater(result["horizon_weeks"], 20)
         # The declared horizon was an artificial cap, so the true optimum is
         # unchanged by lifting it.
-        self.assertEqual(result["objective"], 1316.0)
+        self.assertEqual(result["objective"], 2226.0)
         self.assertEqual(len(result["finish_week"]), len(squeezed.activities))
         # A tie-break that runs out of budget still returns the proven
         # schedule, so it must report that schedule's own priority value

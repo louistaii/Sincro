@@ -95,9 +95,9 @@ scores. Lower penalties are better.
 
 | Scenario | Local hard violations | Penalty | Contract overrun days | ECLO nights | Excess location-nights |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| A | 0 | 316.4 | 112 | 0 | 0 |
-| B | 0 | 110.0 | 0 | 22 | 0 |
-| C | 0 | 229.3 | 91 | 4 | 0 |
+| A | 0 | 381.5 | 98 | 0 | 0 |
+| B | 0 | 100.0 | 0 | 20 | 0 |
+| C | 0 | 293.5 | 84 | 2 | 0 |
 
 The former README's claimed `32.2` optimum used incomplete occupancy and overly
 broad sharing exemptions. Its score is not comparable with these corrected
@@ -112,21 +112,21 @@ entry point falls back to the heuristic and names that in its `solver` field.
 
 | Scenario | Proven primary penalty | Contract overrun days | ECLO nights | Excess location-nights | Contracts late |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| A | 131.6 | 42 | 0 | 0 | 5 of 14 |
-| B | 50.0 | 0 | 10 | 0 | 0 of 14 |
-| C | 44.5 | 21 | 4 | 0 | 3 of 14 |
+| A | 222.6 | 49 | 0 | 0 | 5 of 14 |
+| B | 60.0 | 0 | 12 | 0 | 0 of 14 |
+| C | 135.5 | 28 | 4 | 0 | 4 of 14 |
 
-Against the heuristic's 316.4 / 110 / 229.3 that is 58% / 55% / 81% less
+Against the heuristic's 381.5 / 100 / 293.5 that is 42% / 40% / 54% less
 penalty. No Priority-1 contract is late in any scenario, under either backend.
 The [recorded comparison](out/algorithm-results.json) includes measured solve
 times, proof status, and local validation results for both backends in A/B/C.
 
-The schedules were regenerated after fixing the A037/A061 closure conflict at
-`PLAT:BET:S15:EB`. Buffer-free work still closes its occupied span: overlapping
-activities must use a legal shared possession or different weeks. The same
-check now applies in the heuristic, exact model, and validator for every
-scenario. The primary penalties above remain achievable with this correction;
-the priority completion tie-break is time-limited and is not proven optimal.
+The schedules were regenerated with the combined closure fixes: buffer-free
+work still closes its occupied span, cross-line Live closures carry buffers,
+and co-workers in one possession must use the same access night. These rules
+apply in the heuristic, exact model, and validator for every scenario, including
+the A037/A061 overlap at `PLAT:BET:S15:EB`. The priority completion tie-break is
+time-limited and is not proven optimal.
 
 ### Which solver runs when
 
@@ -145,7 +145,7 @@ infeasible degrades to the heuristic rather than raising; the report's
 cannot fit inside the declared horizon the model grows it and re-solves, which
 cannot change the optimum of an instance that already fitted, because later
 weeks only ever add penalty. A 20-week version of the public instance is
-infeasible as declared, yet still returns the same proven optimum of 131.6.
+infeasible as declared, yet still returns the same proven optimum of 222.6.
 
 The priority tie-break is anchored to `horizon_start`, not to `date.today()`.
 Anchoring on the wall clock made the emitted schedule depend on which day the
@@ -250,8 +250,8 @@ These must be checked against the reference validator when it is supplied:
 4. Co-sharing exempts a conflicting pair only when they actually share a
    location and have matching groups at every common occupied location. A
    group label reused on disjoint locations does not waive their buffers.
-   Same-contract/type co-workers in one possession use the same local night,
-   so co-sharing cannot disguise a workfront breach.
+   All co-workers in one possession use the same access night, including those
+   from different contracts; the night must fit every co-worker's allocation.
 5. The supplied LOCATION_SUPPLY format is static: it has no week or date column.
    That recurring weekly supply is reused beyond `horizon_weeks` to deliver all
    work. Maintenance is already deducted from supply; dated maintenance

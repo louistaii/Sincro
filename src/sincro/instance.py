@@ -268,15 +268,23 @@ class Instance:
                     footprint.add(other)
 
         # Cutting traction power at an interchange closes the neighbouring
-        # line's hub tunnel and hub platforms too. Only natures that mirror
-        # onto the opposite bound cut power, so only they cross lines.
+        # line's hub tunnel and hub platforms too, and that closure carries the
+        # same buffer as the worksite. Only natures that mirror onto the
+        # opposite bound cut power, so only they cross lines.
         if mirror and any(self.is_hub_location(loc) for loc in widened):
-            footprint |= self._cross_line_hub_closure(line, widened)
+            footprint |= self._cross_line_hub_closure(line, widened, buf_sectors)
 
         return footprint
 
-    def _cross_line_hub_closure(self, line: str, widened: list[str]) -> set[str]:
-        """Hub locations on every other line, across all of their bounds."""
+    def _cross_line_hub_closure(self, line: str, widened: list[str],
+                                buf_sectors: int) -> set[str]:
+        """Hub locations on every other line, across all of their bounds, each
+        carrying the same exclusion buffer as the worksite itself.
+
+        Section 2.4 rule 4 buffers a possession's *closure*, and cutting
+        traction power makes the neighbouring line's hub tunnel part of that
+        closure -- so the buffer wraps it there too, not only on the line the
+        activity is booked on."""
         touched = {self.locations[loc].sector_id for loc in widened
                    if self.locations[loc].is_sector and self.is_hub_location(loc)}
         keys = {self._hub_sectors[sid] for sid in touched if sid in self._hub_sectors}
@@ -286,15 +294,21 @@ class Instance:
             if other == line:
                 continue
             for b in self.bounds_on(other):
+                hub: set[str] = set()
                 for sid, key in self._hub_sectors.items():
                     if self._sector_by_id[sid].line_code == other and (not keys or key in keys):
                         loc = self._loc_by_sector.get((sid, b))
                         if loc is not None:
-                            out.add(loc)
+                            hub.add(loc)
                 for station_id in self._hub_stations:
                     loc = self._loc_by_station.get((other, station_id, b))
                     if loc is not None:
-                        out.add(loc)
+                        hub.add(loc)
+                out |= hub
+                route = self._routes.get((other, b))
+                positions = [i for i, loc in enumerate(route or ()) if loc in hub]
+                if positions:
+                    out.update(self._widen(route, min(positions), max(positions), buf_sectors))
         return out
 
     def affected_lines(self, act: Activity) -> set[str]:

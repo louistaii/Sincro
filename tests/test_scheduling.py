@@ -162,7 +162,10 @@ class SubmissionTests(unittest.TestCase):
                 for detail in ('wk8', 'A037', 'A061', 'PLAT:BET:S15:EB'):
                     self.assertIn(detail, closures[0]['detail'])
                 self.assertNotIn('objective_score', report['soft_scores'])
-                shared = self.publish(inst, rows, scenario, labels=[0, 0])
+                split_nights = self.publish(inst, rows, scenario, labels=[0, 0])
+                self.assertIn('co_share', self.rules(split_nights))
+                shared = self.publish(inst, [('A037', 8, 0, 1), ('A061', 8, 0, 1)],
+                                      scenario, labels=[0, 0])
                 self.assertTrue(shared['feasible'], shared)
                 separate_weeks = self.publish(inst, [('A037', 8, 0, 1), ('A061', 9, 0, 2)], scenario)
                 self.assertTrue(separate_weeks['feasible'], separate_weeks)
@@ -184,7 +187,9 @@ class SubmissionTests(unittest.TestCase):
         self.assertIn('workfront', self.rules(self.publish(inst, [('A1', 1, 0, 1), ('A2', 1, 0, 1)])))
         self.assertTrue(self.publish(inst, [('A1', 1, 0, 1), ('A2', 1, 0, 2)])['feasible'])
         inst.activities['A2'] = replace(inst.activities['A2'], start_location_id=LOC, end_location_id=LOC)
-        self.assertIn('workfront', self.rules(self.publish(inst, [('A1', 1, 0, 1), ('A2', 1, 0, 2)], labels=[0, 0])))
+        # One possession is one access night, so splitting a shared label
+        # across two nights is a co-sharing breach, not a workfront one.
+        self.assertIn('co_share', self.rules(self.publish(inst, [('A1', 1, 0, 1), ('A2', 1, 0, 2)], labels=[0, 0])))
 
     def test_disjoint_reused_label_does_not_waive_buffer(self):
         inst = instance([contract(nature='Non-live (Consist)'), contract('C2')],
@@ -251,6 +256,7 @@ class ConstructionTests(unittest.TestCase):
                     if kind == 'C':
                         self.assertIsNotNone(second)
                         self.assertEqual(week.group_of['A037'], week.group_of['A061'])
+                        self.assertEqual(week.night_of['A037'], week.night_of['A061'])
                     else:
                         self.assertIsNone(second)
                     result, _ = construct(inst, scenario, extra_capacity=extra)
@@ -326,12 +332,17 @@ class ExactClosureTests(unittest.TestCase):
         from sincro.optimal import POLICIES, _build
 
         for scenario in 'ABC':
-            for kind, second_group, feasible in [('C', 1, False), ('C', 0, True), ('PM', 0, False)]:
-                with self.subTest(scenario=scenario, kind=kind, second_group=second_group):
+            for kind, second_group, second_night, feasible in [
+                    ('C', 1, 1, False), ('C', 0, 1, True),
+                    ('C', 0, 2, False), ('PM', 0, 1, False)]:
+                with self.subTest(scenario=scenario, kind=kind, second_group=second_group,
+                                  second_night=second_night):
                     inst = closure_pair(kind)
                     model, _, _, parts = _build(inst, POLICIES[scenario], 9, inst.horizon_start)
                     model.add(parts['normal']['A037', 8, 0] == 1)
                     model.add(parts['normal']['A061', 8, second_group] == 1)
+                    model.add(parts['night']['A037', 8, 1] == 1)
+                    model.add(parts['night']['A061', 8, second_night] == 1)
                     solver = cp_model.CpSolver()
                     solver.parameters.max_time_in_seconds = 10
                     status = solver.solve(model)

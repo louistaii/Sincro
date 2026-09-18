@@ -1,6 +1,6 @@
 scenario,contract_number,simulated_completion_date,overrun_days
 A,C001,2027-06-20,7
-A,C002,2027-07-11,7
+A,C002,2027-07-18,14
 A,C003,2027-06-27,0
 A,C004,2027-07-18,0
 A,C005,2027-03-14,0
