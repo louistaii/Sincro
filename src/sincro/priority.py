@@ -165,7 +165,7 @@ def score_activities(data: dict, weights: dict[str, float] = WEIGHTS) -> list[di
 
 if __name__ == "__main__":
     script_dir = Path(__file__).parent.parent.parent
-    folder_path = script_dir / "01_data"   # <- adjust to wherever your CSVs live
+    folder_path = script_dir / "01_data" 
 
     data = load_all(folder_path)
     ranking = score_activities(data)
