@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from .change_control import apply_changes, build_schedule_constraints, parse_append_csv
 from .emit import emit
 from .instance import load_instance
 
@@ -186,6 +187,32 @@ def run_request(payload: dict) -> dict:
     optimal = payload.get('optimal', False)
     if not isinstance(optimal, bool):
         raise ValueError('optimal must be true or false')
+    changes = payload.get('changes') or []
+    schedule_changes = payload.get('schedule_changes')
+    baseline = payload.get('baseline')
+    change_metadata = None
+    change_notices: list[str] = []
+    if changes:
+        if scenario == 'all':
+            raise ValueError('Apply changes to one scenario at a time')
+        if not isinstance(changes, list):
+            raise ValueError('changes must be a list')
+        expanded = []
+        for change in changes:
+            if isinstance(change, dict) and change.get('kind') == 'append_csv':
+                expanded.append({'kind': 'append', 'activities': parse_append_csv(str(change.get('csv', '')))})
+            else:
+                expanded.append(change)
+        changes = expanded
+        if schedule_changes is None:
+            schedule_changes = changes
+        if not isinstance(schedule_changes, list):
+            raise ValueError('schedule_changes must be a list')
+        try:
+            as_of_date = dt.date.fromisoformat(str(payload.get('as_of_date', dt.date.today().isoformat())))
+        except ValueError as exc:
+            raise ValueError('Change received date must be a valid date') from exc
+        optimal = True
     with tempfile.TemporaryDirectory(prefix='sincro-web-') as tmp:
         root = Path(tmp)
         data = root / 'instance'
@@ -193,7 +220,13 @@ def run_request(payload: dict) -> dict:
         for name in INPUT_FILES:
             content = _input_text(files[name]) if files is not None else (DATA / name).read_text()
             (data / name).write_text(content, encoding='utf-8')
+        if changes:
+            change_notices = apply_changes(data, changes)
         inst = load_instance(data)
+        schedule_constraints = None
+        if changes:
+            schedule_constraints, change_metadata = build_schedule_constraints(
+                inst, baseline, schedule_changes, as_of_date)
         results = []
         for choice in ('A', 'B', 'C') if scenario == 'all' else (scenario,):
             output = root / choice
@@ -201,6 +234,7 @@ def run_request(payload: dict) -> dict:
                 report = emit(
                     str(data), str(output), choice, optimal=optimal,
                     primary_seconds=EXACT_SECONDS_PER_SCENARIO if optimal else None,
+                    schedule_constraints=schedule_constraints,
                 )
             except (ImportError, RuntimeError, ValueError) as exc:
                 results.append({'scenario': choice, 'error': str(exc)})
@@ -216,7 +250,10 @@ def run_request(payload: dict) -> dict:
                           for r in access if r['activity_id'] == aid]
                 finish = max(r['week'] for r in nights)
                 activities.append({'id': aid, 'contract': a.contract_number, 'priority': c.contract_priority,
-                    'type': c.access_type, 'nature': c.nature_of_activity, 'locations': inst.span_locations(a),
+                    'activity_priority': a.activity_priority, 'activity_type': a.activity_type,
+                    'type': c.access_type, 'nature': c.nature_of_activity,
+                    'start_location': a.start_location_id, 'end_location': a.end_location_id,
+                    'start_date': a.planned_start_date.isoformat(), 'locations': inst.span_locations(a),
                     'predecessor': a.predecessor_activity_id, 'nights': nights, 'workload': a.total_accesses,
                     'overrun_days': max(0, (inst.week_end(finish) - c.planned_completion_date).days)})
             contracts = []
@@ -237,13 +274,22 @@ def run_request(payload: dict) -> dict:
                 for name in ('SCHEDULE_ACCESS.csv', 'SCHEDULE_OCCUPANCY.csv', 'RESULTS.csv'):
                     archive.write(output / name, name)
             calendar, summary = _calendar_exports(inst, choice, access)
+            revision = None
+            if change_metadata is not None:
+                before = {(str(row['activity_id']), int(row['week']), int(row['eclo']))
+                          for row in baseline}
+                after = {(row['activity_id'], int(row['week']), int(row['eclo'])) for row in access}
+                revision = {**change_metadata, 'notices': change_notices,
+                            'changed_accesses': len(before.symmetric_difference(after))}
             results.append({'scenario': choice, 'report': report, 'activities': activities,
                             'contracts': contracts,
+                            'revision': revision,
                             'download': base64.b64encode(buffer.getvalue()).decode('ascii'),
                             'calendar': base64.b64encode(calendar.encode()).decode('ascii'),
                             'summary': base64.b64encode(summary.encode()).decode('ascii')})
         return {'results': results, 'horizon_start': inst.horizon_start.isoformat(), 'horizon_weeks': inst.horizon_weeks,
                 'activity_count': len(inst.activities), 'contract_count': len(inst.contracts),
+                'locations': sorted(inst.locations),
                 'engine': 'exact' if optimal else 'heuristic'}
 
 

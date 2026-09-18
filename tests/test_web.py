@@ -55,6 +55,34 @@ class UploadTests(unittest.TestCase):
         self.assertNotIn('error', response['results'][0])
         self.assertEqual(response['activity_count'], 54)
 
+    def test_controlled_edit_reoptimises_and_reports_the_freeze_policy(self):
+        files = {name: (DATA / name).read_text() for name in INPUT_FILES}
+        for name in ('07_PROJECT_DETAILS.csv', '08_ACTIVITY_DETAILS.csv'):
+            reader = csv.DictReader(io.StringIO(files[name]))
+            row = next(reader)
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=reader.fieldnames)
+            writer.writeheader()
+            writer.writerow(row)
+            files[name] = output.getvalue()
+        initial = run_request({'files': files, 'scenario': 'A'})['results'][0]
+        baseline = [
+            {'activity_id': activity['id'], **night}
+            for activity in initial['activities'] for night in activity['nights']
+        ]
+        revised = run_request({
+            'files': files, 'scenario': 'A', 'optimal': True,
+            'changes': [{'kind': 'edit_activity', 'activity_id': 'A001',
+                         'total_accesses': 3, 'planned_start_date': '2027-05-24'}],
+            'baseline': baseline, 'as_of_date': '2027-01-04',
+        })
+        result = revised['results'][0]
+        self.assertNotIn('error', result)
+        self.assertEqual(result['activities'][0]['workload'], 3)
+        self.assertEqual(result['revision']['frozen_until'], '2027-01-18')
+        self.assertIn('Updated A001', result['revision']['notices'][0])
+        self.assertEqual(revised['engine'], 'exact')
+
     @staticmethod
     def _xlsx(csv_text):
         rows = list(csv.reader(io.StringIO(csv_text)))

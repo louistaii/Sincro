@@ -35,7 +35,8 @@ def write_submission(inst: Instance, result: dict, out: Path, scenario: str) -> 
 
 
 def _solve_best(inst: Instance, scenario: str, optimal: bool,
-                primary_seconds: float | None) -> tuple[dict, str]:
+                primary_seconds: float | None,
+                schedule_constraints: dict | None = None) -> tuple[dict, str]:
     """Prove the optimum when asked and able; otherwise schedule heuristically.
 
     The brief forbids ever declaring a case impossible, so an exact solve that
@@ -46,19 +47,28 @@ def _solve_best(inst: Instance, scenario: str, optimal: bool,
         return solve(inst, scenario), 'heuristic'
     try:
         from .optimal import ExactSolveFailed, solve_exact
-    except ImportError:
+    except ImportError as exc:
+        if schedule_constraints:
+            raise RuntimeError('Controlled replanning requires OR-Tools') from exc
         return solve(inst, scenario), 'heuristic (OR-Tools not installed)'
     try:
-        result = solve_exact(inst, scenario, primary_seconds=primary_seconds)
+        result = solve_exact(inst, scenario, primary_seconds=primary_seconds,
+                             schedule_constraints=schedule_constraints)
     except ExactSolveFailed:
+        if schedule_constraints:
+            raise
         return solve(inst, scenario), 'heuristic (no exact schedule found)'
     return result, 'exact' if result.get('proven') else 'exact (not proven optimal)'
 
 
 def emit(data_dir: str, out_dir: str, scenario: str = 'A', *, optimal: bool = False,
-         primary_seconds: float | None = None) -> dict:
+         primary_seconds: float | None = None,
+         schedule_constraints: dict | None = None) -> dict:
     inst = load_instance(data_dir)
-    result, solver = _solve_best(inst, scenario, optimal, primary_seconds)
+    if schedule_constraints and not optimal:
+        raise ValueError('Controlled replanning requires the exact optimiser')
+    result, solver = _solve_best(
+        inst, scenario, optimal, primary_seconds, schedule_constraints)
     with tempfile.TemporaryDirectory(prefix='sincro-') as temporary:
         staging = Path(temporary)
         write_submission(inst, result, staging, scenario)

@@ -109,7 +109,8 @@ def _default_as_of(inst: Instance) -> dt.date:
     return inst.horizon_start
 
 
-def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.date):
+def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.date,
+           schedule_constraints: dict | None = None):
     """Assemble the shared model. Returns the pieces the caller needs."""
     m = cp_model.CpModel()
     aids, weeks = list(inst.activities), range(1, horizon + 1)
@@ -166,6 +167,25 @@ def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.
         for w in weeks:
             for n in range(1, c.max_access_per_week + 1):
                 m.add(sum(night[a, w, n] for a in members) <= c.number_of_workfronts)
+
+    # Change control can protect visible decisions inside a rolling freeze
+    # window. Possession-group ids remain free because they are an internal
+    # representation and may safely be reassigned without moving an access.
+    for (a, w), decision in (schedule_constraints or {}).get('fixed', {}).items():
+        if a not in inst.activities or w not in weeks:
+            continue
+        if decision is None:
+            m.add(active[a, w] == 0)
+            continue
+        m.add(active[a, w] == 1)
+        if policy.allow_eclo:
+            m.add(sum(eclo[a, w, g] for g in groups) == int(decision['eclo']))
+        elif decision['eclo']:
+            raise ValueError(f'Scenario {policy.name} cannot preserve an ECLO access')
+        selected_night = int(decision['access_night'])
+        if (a, w, selected_night) not in night:
+            raise ValueError(f'{a} has an invalid protected local night {selected_night}')
+        m.add(night[a, w, selected_night] == 1)
 
     span = {a: set(inst.span_locations(inst.activities[a])) for a in aids}
     foot = {a: inst.closure_footprint(inst.activities[a]) for a in aids}
@@ -344,15 +364,19 @@ def _extract(inst: Instance, s, parts) -> dict:
 
 def solve_exact(inst: Instance, scenario: str, *, as_of_date: dt.date | None = None,
                 primary_seconds: float | None = None,
-                secondary_seconds: float = 30.0) -> dict:
+                secondary_seconds: float = 30.0,
+                schedule_constraints: dict | None = None) -> dict:
     """Solve one scenario exactly, growing the horizon if the workload needs it."""
     policy = POLICIES[scenario.upper()]
     as_of_date = as_of_date or _default_as_of(inst)
-    horizon = inst.horizon_weeks
+    protected_horizon = max((week for _, week in
+                             (schedule_constraints or {}).get('fixed', {})), default=0)
+    horizon = max(inst.horizon_weeks, protected_horizon)
     last: ExactSolveFailed | None = None
 
     for attempt in range(MAX_HORIZON_ATTEMPTS):
-        m, primary, secondary, parts = _build(inst, policy, horizon, as_of_date)
+        m, primary, secondary, parts = _build(
+            inst, policy, horizon, as_of_date, schedule_constraints)
         try:
             s, value, tie, proven, tie_proven = _solve_lexicographic(
                 m, primary, secondary, policy, primary_seconds, secondary_seconds)

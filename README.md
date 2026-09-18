@@ -33,6 +33,27 @@ the deterministic heuristic for a quicker planning pass. The app shows:
 - Separate iCalendar (`.ics`) and calendar-summary CSV downloads for stakeholder
   calendars and reporting.
 
+### Controlled plan changes
+
+Every generated scenario includes an **Append · edit · postpone** action:
+
+- **Append** accepts one or more rows in the standard activity-details CSV
+  format, or a guided form tied to an existing contract.
+- **Edit** changes an activity's planned access days/start date, or a contract's
+  aggregate access days/planned completion date. Contract reductions always
+  retain at least one day for each activity.
+- **Postpone** removes a selected access from its planned week and finds a
+  validated replacement.
+
+The change date controls a rolling 14-day stability window. Existing decisions
+inside that window are fixed. With 3–13 days' notice, a postponed access may be
+replanned only alongside future work owned by the same contract; the first two
+days and every other contract remain protected. With two days' notice or less,
+the replacement is scheduled after the frozen window. Controlled replanning
+uses the exact OR-Tools model because the heuristic cannot guarantee these
+locks. Each revised result states the freeze date and number of protected and
+changed accesses.
+
 Uploads are processed in temporary directories and removed after the response.
 A failure in B is shown explicitly while successful A/C results remain available.
 The server binds to localhost by default. This is a local application, not yet a
