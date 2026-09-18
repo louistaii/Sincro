@@ -299,8 +299,9 @@ def _solve_lexicographic(m, primary, secondary, policy, primary_seconds, seconda
     primary_value = round(first.objective_value)
 
     # Without a proof, locking the objective could exclude better schedules.
+    # Report the tie-break value of the schedule actually being returned.
     if not proven:
-        return first, float(primary_value), 0.0, False, False
+        return first, float(primary_value), float(first.value(secondary)), False, False
 
     m.add(primary == primary_value)
     # Seed the tie-break solve with the proven schedule; possession and night
@@ -314,7 +315,9 @@ def _solve_lexicographic(m, primary, secondary, policy, primary_seconds, seconda
     second.parameters.max_time_in_seconds = secondary_seconds
     status = second.solve(m)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return first, float(primary_value), 0.0, True, False
+        # The tie-break pass ran out of budget. The proven schedule still
+        # stands; report its own tie-break value rather than a nominal zero.
+        return first, float(primary_value), float(first.value(secondary)), True, False
     return (second, float(primary_value), second.objective_value, True,
             status == cp_model.OPTIMAL)
 

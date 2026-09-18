@@ -208,6 +208,10 @@ class ExactSolverPolicyTests(unittest.TestCase):
         # unchanged by lifting it.
         self.assertEqual(result["objective"], 1316.0)
         self.assertEqual(len(result["finish_week"]), len(squeezed.activities))
+        # A tie-break that runs out of budget still returns the proven
+        # schedule, so it must report that schedule's own priority value
+        # rather than a nominal zero.
+        self.assertGreater(result["priority_objective"], 0)
 
 
 class FallbackTests(unittest.TestCase):
