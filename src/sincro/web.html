@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sincro · Track access planner</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#172e37;background:#f3f6f7}*{box-sizing:border-box}body{margin:0}main{max-width:1440px;margin:auto;padding:32px}h1{font-size:36px;margin:8px 0}h2{font-size:21px}p{line-height:1.6}.eyebrow{letter-spacing:.14em;font-size:12px;font-weight:700;color:#287269}.muted{color:#546a73;font-size:14px}.panel{background:white;padding:24px;border:1px solid #dbe4e8;border-radius:14px;margin-top:22px}.controls{display:flex;gap:16px;flex-wrap:wrap;align-items:end}label{display:grid;gap:8px;font-weight:600;font-size:14px}input,select,button,.download{font:inherit;border:1px solid #b4c5cc;border-radius:7px;padding:10px}button,.download{cursor:pointer;background:#146b60;color:white;border:0;text-decoration:none}button.secondary{background:#e5efec;color:#17574f}button:disabled{opacity:.55;cursor:wait}.note{border-left:3px solid #dca54b;padding-left:14px}.error{color:#a13220}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin:20px 0}.metric{background:#f3f7f8;padding:16px;border-radius:9px}.metric b{display:block;font-size:25px;margin-top:6px}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:15px}.scroll{overflow:auto;max-height:600px}table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}th,td{padding:8px 6px;text-align:center;border-bottom:1px solid #e7edef;white-space:nowrap;min-width:27px}th{position:sticky;top:0;background:#eef3f5;z-index:2}th:first-child,td:first-child{position:sticky;left:0;min-width:150px;text-align:left;background:white;z-index:1}th:first-child{z-index:3;background:#eef3f5}.night{display:block;background:#16796c;border-radius:3px;width:16px;height:16px;margin:auto}.eclo{background:#d59624}.late{color:#a34627}details{margin-top:18px}summary{cursor:pointer;font-weight:600}pre{white-space:pre-wrap;word-break:break-word;font-size:12px}.legend{display:flex;gap:20px;align-items:center}.legend span{display:inline-block}.legend .night{width:10px;height:10px;margin-right:6px}#status{min-height:24px}small{font-weight:400;color:#546a73}@media(max-width:600px){main{padding:16px}.panel{padding:16px}.toolbar{align-items:start;flex-direction:column}}
+</style>
+<main>
+<header><span class="eyebrow">SINCRO / WORKS CONTROL</span><h1>Plan the work. Account for every night.</h1>
+<p class="muted">Upload a demand book, compare the three access policies, and download complete possession schedules.</p></header>
+<section class="panel"><div class="controls">
+<label>Instance files<input id="files" type="file" multiple accept=".csv" aria-describedby="file-help"></label>
+<label>Planning policy<select id="scenario"><option value="all">Compare A, B and C</option><option value="A">A · Fixed supply, flexible dates</option><option value="B">B · Fixed dates, flexible supply</option><option value="C">C · Balanced supply and dates</option></select></label>
+<button id="run">Schedule uploaded files</button><button id="example" class="secondary">Use public example</button></div>
+<p id="file-help" class="muted">Select all eight CSVs, from 01_LINES.csv through 08_ACTIVITY_DETAILS.csv. Uploads are processed temporarily.</p>
+<p id="status" role="status" aria-live="polite"></p>
+<p class="muted note">Validation uses the local PS1 rule implementation. The judges’ reference validator is not included, and these heuristic results are not proven optimal. Buffered possessions use conservative checks across the week.</p></section>
+<div id="results"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const node=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el};
+let urls=[];
+async function run(example){
+ urls.forEach(url=>URL.revokeObjectURL(url));urls=[];$('results').replaceChildren();
+ $('status').className='muted';$('status').textContent='Scheduling every activity and checking all three output files…';
+ $('run').disabled=$('example').disabled=true;
+ try{
+  let files=null;
+  if(!example){
+   const selected=Array.from($('files').files);
+   if(selected.length!==8)throw Error('Select all eight instance CSV files.');
+   files=Object.fromEntries(await Promise.all(selected.map(async file=>[file.name,await file.text()])));
+  }
+  const response=await fetch('/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenario:$('scenario').value,files})});
+  const data=await response.json();if(data.error)throw Error(data.error);
+  data.results.forEach(result=>render(result,data));
+  $('status').textContent=`Processed ${data.activity_count} activities across ${data.contract_count} contracts. Results below show local validation and any scheduling failures.`;
+ }catch(error){$('status').className='error';$('status').textContent=error.message;}
+ finally{$('run').disabled=$('example').disabled=false;}
+}
+function render(result,data){
+ const section=node('section',undefined,'panel');$('results').append(section);
+ const toolbar=node('div',undefined,'toolbar');section.append(toolbar);
+ toolbar.append(node('h2',`Scenario ${result.scenario} · ${{A:'Fixed supply',B:'Fixed completion dates',C:'Balanced trade-off'}[result.scenario]}`));
+ if(result.error){section.append(node('p',result.error,'error'));return;}
+ const bytes=Uint8Array.from(atob(result.download),c=>c.charCodeAt(0));
+ const url=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}));urls.push(url);
+ const download=node('a','Download 3 CSVs','download');download.href=url;download.download=`Sincro-${result.scenario}.zip`;toolbar.append(download);
+ const report=result.report,s=report.soft_scores;
+ section.append(node('p',`${report.feasible?'Passed local validation':'Failed validation'} · ${result.activities.length}/${data.activity_count} activities fully delivered.`,report.feasible?'muted':'error'));
+ const metrics=node('div',undefined,'metrics');section.append(metrics);
+ for(const [label,value] of [['Penalty score ↓',s.objective_score],['Contract overrun days',s.overrun_days_total],['Extra location-nights',s.excess_access_nights_total],['ECLO nights',s.eclo_nights_total]]){
+  const card=node('div',label,'metric');card.append(node('b',String(value)));metrics.append(card);
+ }
+ section.append(node('p',`Priority-weighted delay: ${s.priority_weighted_score}. ${result.scenario==='A'?'ECLO and extra supply are forbidden.':result.scenario==='B'?'Every planned deadline is met; the score charges 7 per extra location-night and 5 per ECLO night.':'The score adds weighted delay, 7 per extra location-night and 5 per ECLO night; each line has one ECLO window of at most two weeks.'}`,'muted'));
+ const legend=node('p',undefined,'legend muted');for(const [text,cls] of [['Standard access','night'],['ECLO access','night eclo']]){const item=node('span');item.append(node('span',undefined,cls),document.createTextNode(text));legend.append(item);}section.append(legend);
+ const scroll=node('div',undefined,'scroll'),table=node('table'),head=node('thead'),header=node('tr');
+ const maxWeek=Math.max(data.horizon_weeks,...result.activities.flatMap(a=>a.nights.map(n=>n.week)));
+ header.append(node('th','Activity / contract'));for(let week=1;week<=maxWeek;week++)header.append(node('th',String(week)));
+ head.append(header);table.append(head);const body=node('tbody');
+ for(const a of result.activities){const tr=node('tr'),label=node('td',`${a.id} / ${a.contract}`);label.title=`Priority ${a.priority}; ${a.type}; ${a.nature}; ${a.workload} work units. ${a.overrun_days} days past target. ${a.predecessor?'After '+a.predecessor+'. ':''}${a.locations.join(', ')}`;if(a.overrun_days)label.className='late';tr.append(label);
+  for(let week=1;week<=maxWeek;week++){const td=node('td'),n=a.nights.find(n=>n.week===week);if(n){const mark=node('span',undefined,n.eclo?'night eclo':'night');mark.title=`${a.id}, week ${week}: ${n.eclo?'ECLO (1.5 units)':'standard (1 unit)'}`;td.append(mark);}tr.append(td);}body.append(tr);
+ }
+ table.append(body);scroll.append(table);section.append(scroll);
+ section.append(node('p',`Weeks start from ${data.horizon_start}. Red activity labels finish past their contract’s planned date. Hover a label for its locations and predecessor. Schedules may extend past the ${data.horizon_weeks}-week nominal horizon to deliver all work.`,'muted'));
+ const details=node('details'),summary=node('summary','Validation report and capacity hotspots');details.append(summary,node('pre',JSON.stringify(report,null,2)));section.append(details);
+}
+$('run').addEventListener('click',()=>run(false));$('example').addEventListener('click',()=>run(true));
+</script>
+</html>

@@ -36,7 +36,7 @@ def main(data_dir: str = "01_data") -> None:
     print(f"longest chain (activities)    : {ps['max_chain_depth']}")
     print(f"cross-contract links          : {len(ps['cross_contract_links'])}")
     for aid, p in ps["links"]:
-        a, pa = inst.activities[aid], inst.activities[ps['n_linked'] and p]
+        a, pa = inst.activities[aid], inst.activities[p]
         flag = "  <-- successor's planned start is NOT after predecessor's" \
             if (aid, p) in ps["inverted_planned_starts"] else ""
         print(f"    {aid} ({a.contract_number}) <- {p} ({pa.contract_number})"
@@ -47,7 +47,7 @@ def main(data_dir: str = "01_data") -> None:
     print("[Q3] CRITICAL-PATH LOWER BOUND  (infinite capacity; only planned")
     print("     starts + precedence + 1 access-night per activity per week)")
     print("-" * 78)
-    for label, eclo in (("no ECLO  (Scenario A)", False), ("with ECLO (B/C)", True)):
+    for label, eclo in (("no ECLO  (Scenario A)", False), ("unrestricted ECLO (B; optimistic bound for C)", True)):
         sched = earliest_schedule(inst, eclo)
         sc = score_from_schedule(inst, sched)
         beyond = [aid for aid, (_, f) in sched.items() if f > H]
@@ -64,8 +64,7 @@ def main(data_dir: str = "01_data") -> None:
 
     sched_a = earliest_schedule(inst, False)
     sc_end = score_from_schedule(inst, sched_a, use_week_end=True)
-    sc_start = score_from_schedule(inst, sched_a, use_week_start := False) if False else \
-        score_from_schedule(inst, sched_a, use_week_end=False)
+    sc_start = score_from_schedule(inst, sched_a, use_week_end=False)
     print(f"\n    sensitivity: completion date = week END -> {sc_end['priority_weighted_score']:,.1f}")
     print(f"                 completion date = week START -> {sc_start['priority_weighted_score']:,.1f}")
 

@@ -104,7 +104,7 @@ def main(data_dir: str = "01_data") -> None:
         wks = sorted(wk for (l, wk) in span_load if l == loc)
         tot = sum(len(span_load[(loc, wk)]) for wk in wks)
         peak = max((len(span_load[(loc, wk)]) for wk in wks), default=0)
-        print(f"  {loc:<24} weeks-used={len(wks):>2}/30  activity-weeks={tot:>3}  peak/wk={peak}")
+        print(f"  {loc:<24} weeks-used={len(wks):>2}/{inst.horizon_weeks}  activity-weeks={tot:>3}  peak/wk={peak}")
 
 
 if __name__ == "__main__":
