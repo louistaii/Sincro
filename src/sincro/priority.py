@@ -22,9 +22,14 @@ original units (days, counts, capacity, whatever).
 
 from __future__ import annotations
 
+import datetime as dt
+import math
+from dataclasses import dataclass
 from pathlib import Path
 
-from .extract import load_all, Activity, Contract, LocationSupply, BufferLocation
+from .extract import Activity, Contract, load_all
+from .instance import Instance
+from .rules import ACTIVITY_NUDGE, CONTRACT_WEIGHT
 
 
 WEIGHTS = {
@@ -188,7 +193,7 @@ def score_activities(data: dict, weights: dict[str, float] = WEIGHTS) -> list[di
 # 4. Run it
 # --------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def legacy_main() -> None:
     import sys
 
     default = Path(__file__).resolve().parents[2] / "01_data"
@@ -200,3 +205,152 @@ if __name__ == "__main__":
     print(f"{'rank':>4}  {'activity':<10} {'score':>6}")
     for rank, r in enumerate(ranking, start=1):
         print(f"{rank:>4}  {r['activity_id']:<10} {r['score']:>6.2f}")
+
+
+# --------------------------------------------------------------------------
+# Scenario-aware, penalty-calibrated ranking used by the schedulers.
+# --------------------------------------------------------------------------
+
+ACCESS_MULTIPLIER = {"PM": 1.35, "PC": 1.20, "C": 1.00}
+ECLO_COST = 5.0
+
+
+@dataclass(frozen=True)
+class PriorityBreakdown:
+    activity_id: str
+    contract_number: str
+    scenario: str
+    as_of_date: dt.date
+    due_date: dt.date
+    days_to_due: int
+    remaining_accesses: float
+    minimum_duration_weeks: int
+    slack_days: int
+    runway_ratio: float
+    contract_weight: float
+    activity_multiplier: float
+    weekly_delay_penalty: float
+    nature_multiplier: float
+    access_multiplier: float
+    closure_pressure: float
+    restriction_multiplier: float
+    score: float
+
+
+def _minimum_duration_weeks(
+    remaining_accesses: float,
+    scenario: str,
+    remaining_eclo: int | None,
+) -> int:
+    if remaining_accesses <= 0:
+        return 0
+    if scenario == "A":
+        return math.ceil(remaining_accesses)
+    cap = math.inf if scenario == "B" else max(0, remaining_eclo or 0)
+    half_units = round(2 * remaining_accesses)
+    best = math.ceil(remaining_accesses)
+    for eclo in range(0, half_units // 3 + 1):
+        normal_units = half_units - 3 * eclo
+        if eclo <= cap and normal_units >= 0 and normal_units % 2 == 0:
+            best = min(best, eclo + normal_units // 2)
+    return best
+
+
+def calculate_priority(
+    inst: Instance,
+    activity_id: str,
+    scenario: str,
+    *,
+    as_of_date: dt.date,
+    remaining_accesses: float | None = None,
+    eclo_used: int = 0,
+) -> PriorityBreakdown:
+    """Return an explainable priority score; higher values dispatch first.
+
+    The calculation uses duration-adjusted due-date slack as its feasibility
+    guardrail, then scales the official delay penalty by data-derived closure
+    and access restrictions. Nature names are deliberately not hardcoded:
+    buffer depth and opposite-bound mirroring carry their operational meaning.
+    """
+    scenario = scenario.upper()
+    if scenario not in {"A", "B", "C"}:
+        raise ValueError(f"unknown scenario {scenario!r}; expected A, B or C")
+    activity = inst.activities[activity_id]
+    contract = inst.contracts[activity.contract_number]
+    remaining = float(activity.total_accesses if remaining_accesses is None else remaining_accesses)
+    remaining_eclo = None if scenario == "B" else max(0, 2 - eclo_used)
+    duration = _minimum_duration_weeks(remaining, scenario, remaining_eclo)
+
+    days_to_due = (contract.planned_completion_date - as_of_date).days + 1
+    available_days = max(1, days_to_due)
+    duration_days = 7 * duration
+    slack_days = days_to_due - duration_days
+    runway_ratio = min(20.0, duration_days / available_days)
+    late_weeks = max(0.0, -slack_days / 7)
+    slack_weeks = max(0.0, slack_days / 7)
+    proximity = 1 / (1 + slack_weeks)
+    urgency_decay = proximity * proximity
+    duration_factor = 1 + 0.15 * duration
+
+    contract_weight = CONTRACT_WEIGHT[contract.contract_priority]
+    activity_multiplier = 1 + ACTIVITY_NUDGE[activity.activity_priority]
+    weekly_penalty = 7 * contract_weight * activity_multiplier
+
+    buffer_depth, mirrors = inst.buffer_rules[contract.nature_of_activity]
+    nature_multiplier = 1 + 0.10 * buffer_depth + (0.15 if mirrors else 0)
+    access_multiplier = ACCESS_MULTIPLIER[contract.access_type]
+    footprint = inst.closure_footprint(activity)
+    closure_pressure = (
+        sum(1 / max(1, inst.supply[location]) for location in footprint) / len(footprint)
+        if footprint else 0.0
+    )
+    restriction = nature_multiplier * access_multiplier * (1 + 0.25 * closure_pressure)
+
+    if scenario == "A":
+        score = weekly_penalty * restriction * duration_factor * (
+            urgency_decay + 10 * late_weeks
+        )
+    elif scenario == "B":
+        feasibility = 10_000 * late_weeks + 1_000 * urgency_decay * duration_factor
+        score = restriction * feasibility + weekly_penalty * proximity
+    else:
+        avoidable_penalty = max(0.0, weekly_penalty - ECLO_COST)
+        score = restriction * duration_factor * (
+            ECLO_COST * urgency_decay
+            + avoidable_penalty * (2 * urgency_decay + 10 * late_weeks)
+        )
+
+    return PriorityBreakdown(
+        activity_id=activity_id,
+        contract_number=activity.contract_number,
+        scenario=scenario,
+        as_of_date=as_of_date,
+        due_date=contract.planned_completion_date,
+        days_to_due=days_to_due,
+        remaining_accesses=remaining,
+        minimum_duration_weeks=duration,
+        slack_days=slack_days,
+        runway_ratio=round(runway_ratio, 4),
+        contract_weight=contract_weight,
+        activity_multiplier=activity_multiplier,
+        weekly_delay_penalty=weekly_penalty,
+        nature_multiplier=round(nature_multiplier, 4),
+        access_multiplier=access_multiplier,
+        closure_pressure=round(closure_pressure, 4),
+        restriction_multiplier=round(restriction, 4),
+        score=round(score, 6),
+    )
+
+
+def ranked_priorities(
+    inst: Instance, scenario: str, as_of_date: dt.date
+) -> list[PriorityBreakdown]:
+    return sorted(
+        (calculate_priority(inst, aid, scenario, as_of_date=as_of_date)
+         for aid in inst.activities),
+        key=lambda item: (-item.score, item.due_date, item.activity_id),
+    )
+
+
+if __name__ == "__main__":
+    legacy_main()

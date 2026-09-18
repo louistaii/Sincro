@@ -12,8 +12,9 @@ import sys
 from collections import defaultdict
 
 from .analyse import ACTIVITY_NUDGE, CONTRACT_WEIGHT
-from .rules import night_yield
 from .instance import Instance, load_instance
+from .priority import calculate_priority
+from .rules import night_yield
 
 
 class SchedulingError(ValueError):
@@ -156,6 +157,11 @@ def construct(inst: Instance, scenario: str = 'A', *, eclo_quotas: dict[str, int
                 return (-weight, slack, aid)
             if ordering == 'cost':
                 return (-weight * max(0, 1 - slack), slack, -weight, aid)
+            if ordering == 'scenario':
+                detail = calculate_priority(
+                    inst, aid, scenario, as_of_date=inst.week_start(week),
+                    remaining_accesses=remaining[aid], eclo_used=eclo_used[aid])
+                return (detail.slack_days, -detail.score, aid)
             return (slack + (dispatch_bias or {}).get(aid, 0), -weight, aid)
 
         for aid in sorted(ready, key=urgency):
@@ -239,7 +245,7 @@ def solve(inst: Instance, scenario: str = 'A') -> dict:
     if scenario not in ('A', 'B', 'C'):
         raise ValueError('scenario must be A, B or C')
     candidates = []
-    policies = [('slack', {}), ('priority', {}), ('cost', {})]
+    policies = [('slack', {}), ('scenario', {}), ('priority', {}), ('cost', {})]
     # A fixed seed makes the bounded multi-start search reproducible. Biases
     # vary priority pressure and packing order; feasibility never changes.
     rng = random.Random(2027)

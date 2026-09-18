@@ -6,7 +6,8 @@ provides a browser interface for uploading the eight instance CSVs.
 
 **Validation is local, not a certification from the judges.** The reference
 `trackaccess` package, `02_references/`, and `03_submission_sample/` are not in
-this repository. The solver is a deterministic heuristic, not an optimality proof.
+this repository. The dependency-free solver is a deterministic heuristic;
+the optional OR-Tools backend proves the official objective on the public data.
 See [REVIEW.md](REVIEW.md) for the branch review and remaining delivery gaps.
 The full brief is kept verbatim in [docs/PROBLEM_STATEMENT.txt](docs/PROBLEM_STATEMENT.txt).
 
@@ -41,6 +42,10 @@ PYTHONPATH=src python3 -m sincro.emit 01_data out all
 # Or generate one scenario to a chosen directory.
 PYTHONPATH=src python3 -m sincro.emit 01_data out/B B
 
+# Require an OR-Tools proof of the official objective, then improve its
+# priority-weighted completion tie-break (pip install ortools).
+PYTHONPATH=src python3 -m sincro.emit 01_data out/optimal-a A --optimal
+
 # Infer the scenario from RESULTS.csv, or supply A/B/C as the final argument.
 PYTHONPATH=src python3 -m sincro.validate 01_data out/B
 
@@ -59,7 +64,7 @@ answer keys untouched.
 
 The checked-in outputs deliver all **54 activities / 192 required work units**.
 These are results under the documented local model, not reference-validator
-scores or proven optima. Lower penalties are better.
+scores. Lower penalties are better.
 
 | Scenario | Local hard violations | Penalty | Contract overrun days | ECLO nights | Excess location-nights |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -71,6 +76,17 @@ The former README's claimed `32.2` optimum used incomplete occupancy and overly
 broad sharing exemptions. Its score is not comparable with these corrected
 checks. All three current schedules avoid Priority-1 overrun; A/C still have
 Priority-2 and Priority-3 delays. More search may improve them.
+
+The optional exact backend produces the checked-in `out/optimal-*` schedules.
+It first proves the official primary objective, fixes that value, and then
+spends up to 30 seconds improving priority-weighted completion time among equal
+primary solutions.
+
+| Scenario | Proven primary penalty | Contract overrun days | ECLO nights | Excess location-nights |
+| --- | ---: | ---: | ---: | ---: |
+| A | 131.6 | 42 | 0 | 0 |
+| B | 50.0 | 0 | 10 | 0 |
+| C | 44.5 | 21 | 4 | 0 |
 
 ## Scheduling policies
 
@@ -94,6 +110,14 @@ The objective uses contract priority weights **100/10/1**, multiplied by the
 activity nudge **1.3/1.2/1.0**, per late activity-day. B/C add **7 per excess
 location-night** and **5 per ECLO access**; B excludes overrun from its soft score
 because lateness is a hard failure.
+
+The scenario-aware dispatcher additionally calculates duration-adjusted slack
+from the current simulated date, closure pressure, data-derived nature risk
+(buffer depth and opposite-bound mirroring), and PM/PC/C restrictiveness. A
+scales this by avoided delay cost; B makes deadline feasibility dominant; C
+accounts for the five-point ECLO trade-off. This ranking is a secondary
+decision only: exact solving locks the proven scenario penalty before applying
+it, so priority improvements cannot worsen the official objective.
 
 ## Portability to hidden instances
 
@@ -162,6 +186,7 @@ omitting its workload.
 src/sincro/instance.py     Parsing, topology, spans and closure geometry
 src/sincro/rules.py        Constants fixed by the brief, not by the instance
 src/sincro/construct.py    Complete construction and bounded heuristic search
+src/sincro/optimal.py      Exact primary optimisation and priority tie-breaking
 src/sincro/emit.py         Three-file output, validated before publication
 src/sincro/validate.py     Local submission checker and scenario scoring
 src/sincro/web.py          Upload/solve/download service
@@ -170,8 +195,9 @@ src/sincro/analyse.py      Capacity and optimistic critical-path analysis
 src/sincro/report.py       Human-readable instance diagnostics
 src/sincro/feasibility_probe.py  Earliest-start pressure probe
 src/sincro/extract.py      Column-faithful CSV reader for standalone analysis
-src/sincro/priority.py     Tunable activity urgency ranking (standalone)
-out/{A,B,C}/              Precomputed public answer keys
+src/sincro/priority.py     Legacy tunable and scenario-aware urgency rankings
+out/{A,B,C}/              Precomputed heuristic public answer keys
+out/optimal-{a,b,c}/      Proven-primary public answer keys
 tests/                    Hard-rule, congestion and upload regressions
 tests/test_portability.py  Relabelled-instance and multi-line regressions
 docs/PROBLEM_STATEMENT.txt The brief, verbatim

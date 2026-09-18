@@ -34,9 +34,14 @@ def write_submission(inst: Instance, result: dict, out: Path, scenario: str) -> 
             writer.writerows(rows[filename])
 
 
-def emit(data_dir: str, out_dir: str, scenario: str = 'A') -> dict:
+def emit(data_dir: str, out_dir: str, scenario: str = 'A', *, optimal: bool = False) -> dict:
     inst = load_instance(data_dir)
-    result = solve(inst, scenario)
+    if optimal:
+        from .optimal import solve_scenario_a, solve_scenario_b, solve_scenario_c
+        result = {'A': solve_scenario_a, 'B': solve_scenario_b,
+                  'C': solve_scenario_c}[scenario](inst)
+    else:
+        result = solve(inst, scenario)
     with tempfile.TemporaryDirectory(prefix='sincro-') as temporary:
         staging = Path(temporary)
         write_submission(inst, result, staging, scenario)
@@ -55,11 +60,13 @@ def main() -> None:
     parser.add_argument('data_dir')
     parser.add_argument('out_dir')
     parser.add_argument('scenario', choices=['A', 'B', 'C', 'all'], nargs='?', default='A')
+    parser.add_argument('--optimal', action='store_true',
+                        help='prove the official objective, then optimise its priority tie-break')
     args = parser.parse_args()
     try:
         for scenario in ('A', 'B', 'C') if args.scenario == 'all' else (args.scenario,):
             out = str(Path(args.out_dir) / scenario) if args.scenario == 'all' else args.out_dir
-            report = emit(args.data_dir, out, scenario)
+            report = emit(args.data_dir, out, scenario, optimal=args.optimal)
             print(json.dumps({'output': out, 'feasible': report['feasible'], **report['soft_scores']}))
     except (OSError, ValueError, KeyError, csv.Error) as exc:
         parser.exit(1, f'Scheduling failed: {exc}\n')

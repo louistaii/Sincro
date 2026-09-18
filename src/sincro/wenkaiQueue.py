@@ -41,7 +41,7 @@ import heapq
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .extract import load_all, Activity, Contract
+from .extract import Activity, load_all
 from .priority import score_activities
 
 
