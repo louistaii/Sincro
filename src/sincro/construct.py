@@ -12,6 +12,7 @@ import sys
 from collections import defaultdict
 
 from .analyse import ACTIVITY_NUDGE, CONTRACT_WEIGHT
+from .rules import night_yield
 from .instance import Instance, load_instance
 
 
@@ -170,7 +171,7 @@ def construct(inst: Instance, scenario: str = 'A', *, eclo_quotas: dict[str, int
             eclo_used[aid] += eclo
             group_of[(aid, week)] = wk.group_of[aid]
             placements.append((aid, seq[aid], week, eclo, night))
-            remaining[aid] = max(0, remaining[aid] - (1.5 if eclo else 1))
+            remaining[aid] = max(0, remaining[aid] - night_yield(eclo))
             if remaining[aid] == 0:
                 finish_week[aid] = week
         excess += sum(max(0, len(gs) - inst.supply[loc]) for loc, gs in wk.groups_at.items())

@@ -66,6 +66,33 @@ The browser flow is exercised locally. The committed output folders contain
 strictly the three specified files each, with no quality objective awarded to a
 submission that fails a hard rule.
 
+## Hardcoding removed
+
+The branch loaded correctly but was tuned to the public instance's names. Four
+one-change relabellings of `01_data` were run through `load_instance`:
+
+| Relabelling | Before | After |
+| --- | --- | --- |
+| `Live` buffer 2 -> 3 sectors | rejected: "buffer rules must match the three PS1 safety rules" | read from the CSV; closure widens 28 -> 36 locations |
+| Bounds `EB`/`WB` -> `NB`/`SB` | rejected: "invalid bound in SEC:BET:S15_S16:NB" | bounds derived from the supply table |
+| Lines `ALP`/`BET` -> `NOR`/`STH` | rejected: missing supply for a line that no longer exists | lines derived from the instance |
+| Hubs `H01`/`H02` -> `X01`/`X02` | **loaded, and silently dropped the Live cross-line closure** | interchange derived from `is_interchange` topology |
+
+The fourth is the one that mattered: no error, a schedule still reported
+feasible, and the neighbouring line's tunnel left open under a 750V power cut.
+`04_LOCATION_SUPPLY.csv` already states each location's kind, line and bound as
+columns; those are now used instead of re-deriving them by splitting the id on
+`:` and assuming four components.
+
+Geometry was verified unchanged on the public instance: spans, closure
+footprints and affected lines are identical for all 54 activities, and the
+committed `out/A`, `out/B` and `out/C` regenerate byte-for-byte.
+
+`priority.py` could not be imported at all (`from extract import ...` inside a
+package, so `ModuleNotFoundError`); nothing imported it and no test covered it,
+which is why the suite still passed. Its import is fixed and it now takes a data
+directory argument, but it remains standalone and outside the solver path.
+
 ## Remaining competition deliverables and limitations
 
 - **Reference validation:** obtain `trackaccess`, its expansion rules and the

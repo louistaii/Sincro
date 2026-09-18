@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 from collections import defaultdict
 
-from .analyse import MAX_CO_SHARE, earliest_schedule
+from .analyse import MAX_CO_SHARE, cuts_traction_power, earliest_schedule
 from .instance import load_instance
 
 
@@ -82,7 +82,7 @@ def main(data_dir: str = "01_data") -> None:
     print("LIVE ACTIVITY BLAST RADIUS")
     print("-" * 78)
     for a in inst.activities.values():
-        if inst.contracts[a.contract_number].nature_of_activity != "Live":
+        if not cuts_traction_power(inst, a):
             continue
         start, fin = sched[a.activity_id]
         foot = inst.closure_footprint(a)

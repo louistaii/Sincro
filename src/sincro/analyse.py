@@ -12,15 +12,24 @@ import math
 from collections import defaultdict
 
 from .instance import Instance
+from .rules import ACTIVITY_NUDGE, CONTRACT_WEIGHT, ECLO_YIELD, MAX_CO_SHARE
 
-CONTRACT_WEIGHT = {1: 100.0, 2: 10.0, 3: 1.0}
-ACTIVITY_NUDGE = {1: 0.3, 2: 0.2, 3: 0.0}
-MAX_CO_SHARE = 4  # one PC + <=3 C, or <=4 C, per possession
+__all__ = ["ACTIVITY_NUDGE", "CONTRACT_WEIGHT", "MAX_CO_SHARE"]
+
+
+def cuts_traction_power(inst: Instance, act) -> bool:
+    """True for natures that mirror onto the opposite bound.
+
+    Mirroring is the instance's own signal that a nature cuts traction power,
+    which is also what makes it reach across lines at an interchange. Reading
+    the flag keeps this independent of what the nature is called.
+    """
+    return inst.buffer_rules[inst.contracts[act.contract_number].nature_of_activity][1]
 
 
 def weeks_needed(total_accesses: int, eclo: bool) -> int:
     """Weeks to burn down a workload, given <=1 access-night per activity per week."""
-    return math.ceil(total_accesses / 1.5) if eclo else total_accesses
+    return math.ceil(total_accesses / ECLO_YIELD) if eclo else total_accesses
 
 
 def precedence_stats(inst: Instance) -> dict:
@@ -178,13 +187,11 @@ def rule_coverage(inst: Instance) -> dict:
         by_nature[c.nature_of_activity].append(a.activity_id)
 
     live_acts = [a for a in inst.activities.values()
-                 if inst.contracts[a.contract_number].nature_of_activity == "Live"]
+                 if cuts_traction_power(inst, a)]
     live_cross = []
     for a in live_acts:
-        foot = inst.closure_footprint(a)
-        _, line, _, _ = inst.parse_location(a.start_location_id)
-        other = "BET" if line == "ALP" else "ALP"
-        if any(loc.startswith(f"SEC:{other}:") or loc.startswith(f"PLAT:{other}:") for loc in foot):
+        line = inst.line_of(a.start_location_id)
+        if any(inst.line_of(loc) != line for loc in inst.closure_footprint(a)):
             live_cross.append(a.activity_id)
 
     return {

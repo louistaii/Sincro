@@ -12,6 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .analyse import ACTIVITY_NUDGE, CONTRACT_WEIGHT
+from .rules import night_yield
 from .instance import Instance, load_instance
 
 SCHEMAS = {
@@ -84,7 +85,7 @@ def validate(inst: Instance, sub_dir: str | Path, scenario: str | None = None) -
         access_keys.add((aid, wk))
         night_by_access[(aid, wk)] = night
         sequences[aid].append((wk, seq))
-        yields[aid] += 1.5 if e else 1.0
+        yields[aid] += night_yield(e)
         weeks_of[aid].append(wk)
         by_week[wk].add(aid)
         ct_week[(a.contract_number, a.activity_type, wk)][night].add(aid)

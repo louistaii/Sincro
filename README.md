@@ -8,6 +8,7 @@ provides a browser interface for uploading the eight instance CSVs.
 `trackaccess` package, `02_references/`, and `03_submission_sample/` are not in
 this repository. The solver is a deterministic heuristic, not an optimality proof.
 See [REVIEW.md](REVIEW.md) for the branch review and remaining delivery gaps.
+The full brief is kept verbatim in [docs/PROBLEM_STATEMENT.txt](docs/PROBLEM_STATEMENT.txt).
 
 ## Run the web app
 
@@ -94,6 +95,37 @@ activity nudge **1.3/1.2/1.0**, per late activity-day. B/C add **7 per excess
 location-night** and **5 per ECLO access**; B excludes overrun from its soft score
 because lateness is a hard failure.
 
+## Portability to hidden instances
+
+Nothing about the public instance is compiled in. Line codes, bound names,
+station and interchange-hub ids, buffer depths, natures of works and the
+spelling of location ids are all read from the CSVs, so a hidden instance that
+renames any of them behaves identically. `04_LOCATION_SUPPLY.csv` is treated as
+the authority on geography: its `location_kind`, `line_code` and `bound`
+columns are used directly, and a location id is only ever matched against the
+sector and station ids the other files declare. No `SEC:`/`PLAT:` prefix,
+component count or delimiter is assumed.
+
+The interchange is derived rather than named: hubs are the stations flagged
+`is_interchange`, and a hub tunnel is one running between two of them (or
+flagged `is_shared`). Cross-line reach follows the instance's own
+`opposite_bound_required` flag -- the signal that a nature cuts traction power
+-- rather than a nature literally spelled `Live`. Networks with more than two
+lines or two bounds are handled: a power cut at a shared interchange closes the
+hub locations on *every* other line meeting there.
+
+`tests/test_portability.py` enforces this by relabelling the public CSVs --
+hubs, bounds, lines, natures, buffer depths, and all of them at once -- and
+asserting the geometry is isomorphic, plus a synthesised three-line network.
+These matter because a hardcoded identifier does not reliably crash: renaming
+the hubs previously dropped the Live cross-line closure *silently*, which reads
+as a perfectly feasible schedule.
+
+The constants the problem statement fixes for every instance -- the 100/10/1
+priority bands, the activity nudge, the 1.5x ECLO yield and the four-way
+co-sharing mix -- live in `src/sincro/rules.py`, deliberately separate from
+anything instance-shaped.
+
 ## Explicit modelling assumptions
 
 These must be checked against the reference validator when it is supplied:
@@ -128,6 +160,7 @@ omitting its workload.
 ```text
 01_data/                  Eight public instance CSVs
 src/sincro/instance.py     Parsing, topology, spans and closure geometry
+src/sincro/rules.py        Constants fixed by the brief, not by the instance
 src/sincro/construct.py    Complete construction and bounded heuristic search
 src/sincro/emit.py         Three-file output, validated before publication
 src/sincro/validate.py     Local submission checker and scenario scoring
@@ -136,14 +169,21 @@ src/sincro/web.html        Browser interface and access timeline
 src/sincro/analyse.py      Capacity and optimistic critical-path analysis
 src/sincro/report.py       Human-readable instance diagnostics
 src/sincro/feasibility_probe.py  Earliest-start pressure probe
+src/sincro/extract.py      Column-faithful CSV reader for standalone analysis
+src/sincro/priority.py     Tunable activity urgency ranking (standalone)
 out/{A,B,C}/              Precomputed public answer keys
 tests/                    Hard-rule, congestion and upload regressions
+tests/test_portability.py  Relabelled-instance and multi-line regressions
+docs/PROBLEM_STATEMENT.txt The brief, verbatim
 REVIEW.md                 Review findings and unresolved deliverables
 ```
 
 ```bash
 PYTHONPATH=src python3 -m sincro.report 01_data
 PYTHONPATH=src python3 -m sincro.feasibility_probe 01_data
+
+# Rank activities by tunable urgency weights (standalone; edit WEIGHTS to tune).
+PYTHONPATH=src python3 -m sincro.priority 01_data
 ```
 
 The diagnostic lower bounds ignore capacity, workfront contention and some ECLO

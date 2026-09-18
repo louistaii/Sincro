@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from extract import load_all, Activity, Contract, LocationSupply, BufferLocation
+from .extract import load_all, Activity, Contract, LocationSupply, BufferLocation
 
 
 WEIGHTS = {
@@ -53,15 +53,41 @@ WEIGHTS = {
 #    flipping later (e.g. lower activity_priority number = MORE urgent).
 # --------------------------------------------------------------------------
 
-def _sector_id_of(location_id: str) -> str:
-    """'SEC:BET:S15_S16:EB' -> 'SEC:BET:S15_S16' (strips the trailing bound)."""
-    return location_id.rsplit(":", 1)[0]
+# A mirrored closure reaches roughly a sector either side on top of its own
+# buffer; this only has to rank activities against each other, not measure them.
+MIRROR_REACH_BONUS = 2
+
+
+def _sector_of(location_id: str, sectors_by_id: dict):
+    """The sector a location books, or None if it is a platform.
+
+    Matched against the sector ids the instance declares, so no assumption is
+    made about how location ids are spelled or how many components they have.
+    """
+    for sid in sorted(sectors_by_id, key=len, reverse=True):
+        if location_id == sid or (
+            location_id.startswith(sid) and not location_id[len(sid)].isalnum()
+        ):
+            return sectors_by_id[sid]
+    return None
+
+
+def _hub_station_ids(stations) -> set[str]:
+    return {s.station_id for s in stations if s.is_interchange}
+
+
+def _is_shared(sector, hubs: set[str]) -> bool:
+    """Flagged shared, or running between two interchange stations."""
+    if sector is None:
+        return False
+    return bool(sector.is_shared) or {sector.from_station_id, sector.to_station_id} <= hubs
 
 
 def compute_raw_factors(data: dict) -> dict[str, dict[str, float]]:
     activities: list[Activity] = data["activities"]
     contracts: dict[str, Contract] = {c.contract_number: c for c in data["contracts"]}
     sectors_by_id = {s.sector_id: s for s in data["sectors"]}
+    hubs = _hub_station_ids(data["stations"])
     supply_by_location = {ls.location_id: ls.supply_capacity for ls in data["location_supply"]}
     buffer_by_nature = {b.nature_of_works: b for b in data["buffer_locations"]}
     horizon_start = next(p.value for p in data["parameters"] if p.key == "horizon_start")
@@ -79,10 +105,8 @@ def compute_raw_factors(data: dict) -> dict[str, dict[str, float]]:
         contract = contracts[a.contract_number]
         buffer = buffer_by_nature.get(contract.nature_of_activity)
 
-        start_sector_id = _sector_id_of(a.start_location_id)
-        end_sector_id = _sector_id_of(a.end_location_id)
-        start_sector = sectors_by_id.get(start_sector_id)
-        end_sector = sectors_by_id.get(end_sector_id)
+        start_sector = _sector_of(a.start_location_id, sectors_by_id)
+        end_sector = _sector_of(a.end_location_id, sectors_by_id)
 
         start_capacity = supply_by_location.get(a.start_location_id)
         end_capacity = supply_by_location.get(a.end_location_id)
@@ -99,11 +123,12 @@ def compute_raw_factors(data: dict) -> dict[str, dict[str, float]]:
             # higher number = more urgent -> used as-is in step 3
             "duration_needed": a.total_accesses / contract.number_of_maximum_access_per_week,
             "disruption_size": (
-                (buffer.up_to_buffer_sectors + (2 if buffer.opposite_bound_required else 0))
+                (buffer.up_to_buffer_sectors
+                 + (MIRROR_REACH_BONUS if buffer.opposite_bound_required else 0))
                 if buffer else 0
             ),
             "shared_sector_bonus": 1 if (
-                (start_sector and start_sector.is_shared) or (end_sector and end_sector.is_shared)
+                _is_shared(start_sector, hubs) or _is_shared(end_sector, hubs)
             ) else 0,
             "dependents_count": dependents_count[a.activity_id],
         }
@@ -164,8 +189,10 @@ def score_activities(data: dict, weights: dict[str, float] = WEIGHTS) -> list[di
 # --------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    script_dir = Path(__file__).parent.parent.parent
-    folder_path = script_dir / "01_data"   # <- adjust to wherever your CSVs live
+    import sys
+
+    default = Path(__file__).resolve().parents[2] / "01_data"
+    folder_path = Path(sys.argv[1]) if len(sys.argv) > 1 else default
 
     data = load_all(folder_path)
     ranking = score_activities(data)
