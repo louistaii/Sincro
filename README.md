@@ -74,9 +74,9 @@ scores. Lower penalties are better.
 
 | Scenario | Local hard violations | Penalty | Contract overrun days | ECLO nights | Excess location-nights |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| A | 0 | 414.4 | 126 | 0 | 0 |
-| B | 0 | 140.0 | 0 | 28 | 0 |
-| C | 0 | 326.4 | 112 | 2 | 0 |
+| A | 0 | 382.2 | 105 | 0 | 0 |
+| B | 0 | 130.0 | 0 | 26 | 0 |
+| C | 0 | 294.2 | 91 | 2 | 0 |
 
 The former README's claimed `32.2` optimum used incomplete occupancy and overly
 broad sharing exemptions. Its score is not comparable with these corrected
@@ -95,7 +95,7 @@ entry point falls back to the heuristic and names that in its `solver` field.
 | B | 60.0 | 0 | 12 | 0 | 0 of 14 |
 | C | 135.5 | 28 | 4 | 0 | 4 of 14 |
 
-Against the heuristic's 414.4 / 140 / 326.4 that is 46% / 57% / 58% less
+Against the heuristic's 382.2 / 130 / 294.2 that is 42% / 54% / 54% less
 penalty. No Priority-1 contract is late in any scenario, under either backend.
 Proving all three takes roughly 150 seconds on this instance.
 

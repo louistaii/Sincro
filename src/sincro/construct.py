@@ -74,13 +74,19 @@ class Week:
         a = self.inst.activities[aid]
         c = self.inst.contracts[a.contract_number]
         key = (a.contract_number, a.activity_type)
+        # Rule 6: the possession at a shared location is a single access night,
+        # so every co-worker standing on one of this activity's locations fixes
+        # its night -- not only the ones from its own contract.
         peers = [] if group == -1 else [m for m in self.groups[group]
-            if (self.inst.activities[m].contract_number, self.inst.activities[m].activity_type) == key]
+                                        if self.geo.spans[aid] & self.geo.spans[m]]
         required = {self.night_of[m] for m in peers}
         if len(required) > 1:
             return None
         options = sorted(required) if required else range(1, c.max_access_per_week + 1)
         for night in options:
+            # A peer's night can sit outside this contract's weekly allowance.
+            if not 1 <= night <= c.max_access_per_week:
+                continue
             if len(self.nights[key][night]) < c.number_of_workfronts:
                 return night
         return None

@@ -32,6 +32,7 @@ Optimisation**, starting at commit `0c85fec`.
 | RESULTS dates/scenario were ignored; earliness/hotspots were placeholders | Completion evidence and operational diagnostics were unreliable | Recompute and verify dates/overruns, infer scenario, calculate earliness and hotspots |
 | No uploaded-instance execution path | Judges could not submit the eight hidden-instance CSVs through a UI | Add a local browser app with temporary uploads, timeline, validation and ZIP downloads |
 | The `Live` cross-line closure at the interchange carried no buffer | The buffer was applied to the worked line only, then the neighbouring line's hub tunnel and platforms were added unbuffered, so a `Live` closure stopped dead at `H01`/`H02` instead of clearing two sectors beyond. The scheduler booked work inside a live-rail possession and the local validator agreed: the reference validator rejected `A065` inside `A074`'s closure at `PLAT:BET:S13:WB` in wk19 | Buffer the whole closure: carry the activity's own buffer around the cross-line hub locations too |
+| The one-night-per-possession rule was enforced only between co-workers of the same contract | Rule 6 makes a `(location, week, co_share_group)` one possession and one access-night slot, but the constraint was keyed on `(contract_number, activity_type)`, so a label could span two nights whenever its members came from different contracts. Those are two possessions wearing one name: each sits in the other's closure without being co-shared, and the capacity count scores them as one, so supply-1 locations quietly held two possessions. The reference validator rejected `A037` and `A061` as being in each other's closure at `PLAT:BET:S15:EB` in wk9 | Bind the night across every co-worker sharing a location, whatever contract it belongs to, in the heuristic, the exact model and the validator |
 
 The geometry and sharing changes deliberately make assumptions explicit. The
 problem statement combines nightly wording with weekly output and local night
@@ -98,7 +99,7 @@ directory argument, but it remains standalone and outside the solver path.
 
 The CP-SAT backend is a large, real improvement: it proves the Section 2.5
 objective rather than approximating it, cutting the public scores from
-414.4/140/326.4 to 222.6/60/135.5. Splitting policy per scenario is the right
+382.2/130/294.2 to 222.6/60/135.5. Splitting policy per scenario is the right
 call -- A carries no ECLO variables at all, B turns planned dates into a domain
 restriction, and only C needs the per-line window. Four issues were fixed.
 
@@ -120,7 +121,7 @@ two-week ECLO window and `ACCESS_MULTIPLIER` had reappeared across
 come from `rules.py`, which is the only module naming an access code.
 
 The web app -- the judges' live upload path -- called the heuristic, so an
-uploaded instance would have scored 414.4/140/326.4 while the repository
+uploaded instance would have scored 382.2/130/294.2 while the repository
 advertised 222.6/60/135.5. It now reaches for the exact solver with a 90-second
 budget per scenario and falls back rather than hanging.
 

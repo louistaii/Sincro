@@ -139,13 +139,16 @@ def validate(inst: Instance, sub_dir: str | Path, scenario: str | None = None) -
         if (len(acts) > rules.MAX_CO_SHARE or (exclusive and len(acts) > 1)
                 or len(exclusive) > 1 or len(hosts) > 1):
             bad('mix', f'wk{wk} {loc} group {label}: illegal mix {sorted(kinds)}')
-        local_nights = defaultdict(set)
-        for aid in acts:
-            a = inst.activities[aid]
-            if (aid, wk) in night_by_access:
-                local_nights[(a.contract_number, a.activity_type)].add(night_by_access[(aid, wk)])
-        if any(len(nights) > 1 for nights in local_nights.values()):
-            bad('workfront', f'wk{wk} {loc} group {label}: same-contract co-workers must use the same local night')
+        # Rule 6: one (location, week, co_share_group) is one possession, and a
+        # possession is a single access-night slot. Co-workers from different
+        # contracts are bound by that just as tightly as co-workers of one, so
+        # this is not a per-contract check: a label spanning two nights is two
+        # possessions wearing one name, which both hides a closure conflict and
+        # undercounts the location's occupancy.
+        group_nights = {night_by_access[aid, wk] for aid in acts if (aid, wk) in night_by_access}
+        if len(group_nights) > 1:
+            bad('co_share', f'wk{wk} {loc} group {label}: one possession is one access '
+                            f'night, but co-workers use {sorted(group_nights)}')
     excess = 0
     hotspots = []
     for (loc, wk), labels in sorted(groups_at.items()):

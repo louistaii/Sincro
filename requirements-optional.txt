@@ -2,7 +2,7 @@
 #
 # Installing this unlocks the exact CP-SAT backend, which proves the Section
 # 2.5 objective instead of approximating it (public instance: 222.6/60/135.5
-# against the heuristic's 414.4/140/326.4). Without it every entry point falls
+# against the heuristic's 382.2/130/294.2). Without it every entry point falls
 # back to the heuristic and says so in its `solver` field.
 #
 #   pip install -r requirements-optional.txt
