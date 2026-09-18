@@ -34,6 +34,10 @@ the deterministic heuristic for a quicker planning pass. The app shows:
 - Separate iCalendar (`.ics`) and calendar-summary CSV downloads for stakeholder
   calendars and reporting.
 
+The interface follows your system's light or dark appearance. The **Auto** control
+in the header switches between following the system, always light and always dark;
+the choice is remembered in the browser.
+
 ### Controlled plan changes
 
 Every generated scenario includes an **Append · edit · postpone** action:
