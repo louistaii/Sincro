@@ -154,7 +154,9 @@ class SubmissionTests(unittest.TestCase):
         self.assertIn('workfront', self.rules(self.publish(inst, [('A1', 1, 0, 1), ('A2', 1, 0, 1)])))
         self.assertTrue(self.publish(inst, [('A1', 1, 0, 1), ('A2', 1, 0, 2)])['feasible'])
         inst.activities['A2'] = replace(inst.activities['A2'], start_location_id=LOC, end_location_id=LOC)
-        self.assertIn('workfront', self.rules(self.publish(inst, [('A1', 1, 0, 1), ('A2', 1, 0, 2)], labels=[0, 0])))
+        # One possession is one access night, so splitting a shared label
+        # across two nights is a co-sharing breach, not a workfront one.
+        self.assertIn('co_share', self.rules(self.publish(inst, [('A1', 1, 0, 1), ('A2', 1, 0, 2)], labels=[0, 0])))
 
     def test_disjoint_reused_label_does_not_waive_buffer(self):
         inst = instance([contract(nature='Non-live (Consist)'), contract('C2')],
