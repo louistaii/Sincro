@@ -8,8 +8,6 @@ provides a browser interface for uploading the eight instance CSV or Excel files
 `trackaccess` package, `02_references/`, and `03_submission_sample/` are not in
 this repository. The dependency-free solver is a deterministic heuristic;
 the optional OR-Tools backend proves the official objective on the public data.
-See [REVIEW.md](REVIEW.md) for the branch review and remaining delivery gaps.
-The full brief is kept verbatim in [docs/PROBLEM_STATEMENT.txt](docs/PROBLEM_STATEMENT.txt).
 
 ## Run the web app
 
@@ -56,9 +54,20 @@ changed accesses.
 
 Uploads are processed in temporary directories and removed after the response.
 A failure in B is shown explicitly while successful A/C results remain available.
-The server binds to localhost by default. This is a local application, not yet a
-hosted submission URL. Public hosting still needs a deployment environment and
-an appropriate production server/proxy.
+The server binds to localhost by default for local use.
+
+### Deploying to Vercel
+
+`api/solve.py`, `vercel.json` and `requirements.txt` at the repo root make this
+deployable as a Vercel serverless function with no code changes to the app
+itself. `vercel.json` sets `PYTHONPATH=src` so the function can import the
+`sincro` package, and rewrites `/` to `src/sincro/web.html` and `/solve` to
+`/api/solve`, so the existing frontend works unmodified. Exact/optimal solves
+can take up to 90 s per scenario (`EXACT_SECONDS_PER_SCENARIO`), which exceeds
+Vercel Hobby's 60 s function limit for multi-scenario runs -- fast preview
+(heuristic) mode is unaffected. `requirements.txt` is intentionally empty
+(stdlib only); adding `ortools` enables exact solving but adds ~100 MB to the
+function bundle.
 
 ## Generate and validate answer keys
 
@@ -75,10 +84,10 @@ PYTHONPATH=src python3 -m sincro.emit 01_data out/optimal-a A --optimal
 
 # Infer the scenario from RESULTS.csv, or supply A/B/C as the final argument.
 PYTHONPATH=src python3 -m sincro.validate 01_data out/B
-
-# Regression checks, including adversarial submissions and changed uploads.
-PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
+
+Generated answer keys are not checked into this repository; run the commands
+above to produce them locally.
 
 The validator returns JSON and exits nonzero for an invalid submission. All
 three files are checked, including their schemas, workload, exact occupancy,
@@ -89,9 +98,9 @@ answer keys untouched.
 
 ## Public results
 
-The checked-in outputs deliver all **54 activities / 192 required work units**.
-These are results under the documented local model, not reference-validator
-scores. Lower penalties are better.
+Regenerating the answer keys (see above) delivers all **54 activities / 192
+required work units**. These are results under the documented local model,
+not reference-validator scores. Lower penalties are better.
 
 | Scenario | Local hard violations | Penalty | Contract overrun days | ECLO nights | Excess location-nights |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -104,11 +113,11 @@ broad sharing exemptions. Its score is not comparable with these corrected
 checks. All three current schedules avoid Priority-1 overrun; A/C still have
 Priority-2 and Priority-3 delays. More search may improve them.
 
-The optional exact backend produces the checked-in `out/optimal-*` schedules.
-It first proves the official primary objective, fixes that value, and then
-spends up to 30 seconds improving priority-weighted completion time among equal
-primary solutions. Install it with `pip install -r requirements-optional.txt`; without it every
-entry point falls back to the heuristic and names that in its `solver` field.
+The optional exact backend produces these `--optimal` schedules. It first
+proves the official primary objective, fixes that value, and then spends up
+to 30 seconds improving priority-weighted completion time among equal primary
+solutions. Install it with `pip install ortools`; without it every entry point
+falls back to the heuristic and names that in its `solver` field.
 
 | Scenario | Proven primary penalty | Contract overrun days | ECLO nights | Excess location-nights | Contracts late |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -118,8 +127,6 @@ entry point falls back to the heuristic and names that in its `solver` field.
 
 Against the heuristic's 381.5 / 100 / 293.5 that is 42% / 40% / 54% less
 penalty. No Priority-1 contract is late in any scenario, under either backend.
-The [recorded comparison](out/algorithm-results.json) includes measured solve
-times, proof status, and local validation results for both backends in A/B/C.
 
 The schedules were regenerated with the combined closure fixes: buffer-free
 work still closes its occupied span, cross-line Live closures carry buffers,
@@ -221,10 +228,7 @@ flagged `is_shared`). Cross-line reach follows the instance's own
 lines or two bounds are handled: a power cut at a shared interchange closes the
 hub locations on *every* other line meeting there.
 
-`tests/test_portability.py` enforces this by relabelling the public CSVs --
-hubs, bounds, lines, natures, buffer depths, and all of them at once -- and
-asserting the geometry is isomorphic, plus a synthesised three-line network.
-These matter because a hardcoded identifier does not reliably crash: renaming
+This matters because a hardcoded identifier does not reliably crash: renaming
 the hubs previously dropped the Live cross-line closure *silently*, which reads
 as a perfectly feasible schedule.
 
@@ -276,22 +280,14 @@ src/sincro/validate.py     Local submission checker and scenario scoring
 src/sincro/web.py          Upload/solve/download service
 src/sincro/web.html        Browser interface and access timeline
 src/sincro/analyse.py      Capacity and optimistic critical-path analysis
-src/sincro/report.py       Human-readable instance diagnostics
-src/sincro/feasibility_probe.py  Earliest-start pressure probe
 src/sincro/extract.py      Column-faithful CSV reader for standalone analysis
 src/sincro/priority.py     Legacy tunable and scenario-aware urgency rankings
-out/{A,B,C}/              Precomputed heuristic public answer keys
-out/optimal-{a,b,c}/      Proven-primary public answer keys
-tests/                    Hard-rule, congestion and upload regressions
-tests/test_portability.py  Relabelled-instance and multi-line regressions
-docs/PROBLEM_STATEMENT.txt The brief, verbatim
-REVIEW.md                 Review findings and unresolved deliverables
+api/solve.py              Vercel serverless entry point for POST /solve
+vercel.json               Vercel routing/env config
+requirements.txt          Runtime dependencies for the deployed function (stdlib only)
 ```
 
 ```bash
-PYTHONPATH=src python3 -m sincro.report 01_data
-PYTHONPATH=src python3 -m sincro.feasibility_probe 01_data
-
 # Rank activities by tunable urgency weights (standalone; edit WEIGHTS to tune).
 PYTHONPATH=src python3 -m sincro.priority 01_data
 ```

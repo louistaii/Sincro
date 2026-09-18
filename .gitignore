@@ -32,3 +32,5 @@ build/
 dist/
 coverage/
 *.log
+
+out/

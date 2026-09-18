@@ -1,0 +1,14 @@
+{
+  "env": {
+    "PYTHONPATH": "src"
+  },
+  "functions": {
+    "api/solve.py": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/", "destination": "/src/sincro/web.html" },
+    { "source": "/solve", "destination": "/api/solve" }
+  ]
+}

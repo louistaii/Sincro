@@ -1,0 +1,4 @@
+# The web app and its serverless function run on the standard library alone.
+# Add ortools>=9.8 here to enable exact CP-SAT solving (see requirements-optional.txt),
+# but note it adds ~100MB to the function bundle and the exact solve can exceed
+# Vercel's function duration limit (60s on Hobby) for multi-scenario runs.
