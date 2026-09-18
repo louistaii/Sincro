@@ -70,7 +70,7 @@ def earliest_schedule(inst: Instance, eclo: bool) -> dict[str, tuple[int, int]]:
         if aid in finish:
             return finish[aid]
         a = inst.activities[aid]
-        start = inst.week_of(a.planned_start_date)
+        start = max(1, inst.week_of(a.planned_start_date))
         if a.predecessor_activity_id:
             start = max(start, solve(a.predecessor_activity_id) + 1)
         finish[aid] = start + weeks_needed(a.total_accesses, eclo) - 1
@@ -125,6 +125,9 @@ def score_from_schedule(inst: Instance, sched: dict[str, tuple[int, int]],
 def capacity_pressure(inst: Instance) -> dict:
     """Demand vs supply per location, using both the activity's own span and
     its full closure footprint (span + buffers + mirroring)."""
+    def ratio(demand: int, supply: int) -> float:
+        return demand / supply if supply else (math.inf if demand else 0.0)
+
     span_demand = defaultdict(int)
     foot_demand = defaultdict(int)
     span_sizes = {}
@@ -149,8 +152,8 @@ def capacity_pressure(inst: Instance) -> dict:
         hot.append({
             "location": loc, "cap_per_week": cap, "slots_in_horizon": cap * H,
             "span_demand": sd, "footprint_demand": fd,
-            "ratio_no_coshare": fd / (cap * H),
-            "ratio_max_coshare": fd / (cap * H * MAX_CO_SHARE),
+            "ratio_no_coshare": ratio(fd, cap * H),
+            "ratio_max_coshare": ratio(fd, cap * H * MAX_CO_SHARE),
         })
 
     return {
@@ -158,9 +161,9 @@ def capacity_pressure(inst: Instance) -> dict:
         "total_supply_activity_slots": total_supply_slots * MAX_CO_SHARE,
         "total_span_demand": total_span_demand,
         "total_footprint_demand": total_foot_demand,
-        "ratio_span_no_coshare": total_span_demand / total_supply_slots,
-        "ratio_footprint_no_coshare": total_foot_demand / total_supply_slots,
-        "ratio_footprint_max_coshare": total_foot_demand / (total_supply_slots * MAX_CO_SHARE),
+        "ratio_span_no_coshare": ratio(total_span_demand, total_supply_slots),
+        "ratio_footprint_no_coshare": ratio(total_foot_demand, total_supply_slots),
+        "ratio_footprint_max_coshare": ratio(total_foot_demand, total_supply_slots * MAX_CO_SHARE),
         "per_location": hot,
         "span_sizes": span_sizes,
     }
