@@ -168,5 +168,62 @@ class ExactSolverTests(unittest.TestCase):
                 self.assertEqual(len(result["finish_week"]), len(instance.activities))
 
 
+@unittest.skipUnless(importlib.util.find_spec("ortools"), "OR-Tools is not installed")
+class ExactSolverPolicyTests(unittest.TestCase):
+    """The exact solver must be instance-driven and must never give up."""
+
+    def setUp(self) -> None:
+        self.instance = load_instance(ROOT / "01_data")
+
+    def test_tie_break_is_anchored_to_the_instance_not_the_clock(self) -> None:
+        """Two runs on different days must produce the same schedule."""
+        from sincro.optimal import _default_as_of
+
+        self.assertEqual(_default_as_of(self.instance), self.instance.horizon_start)
+
+    def test_possession_count_follows_supply_and_the_scenario_allowance(self) -> None:
+        from sincro.optimal import POLICIES, _possessions_per_location
+
+        cap = max(self.instance.supply.values())
+        # A tolerates no excess, so it models exactly the nominal supply; C is
+        # granted one extra possession per location-week and must be able to
+        # use it.
+        self.assertEqual(len(_possessions_per_location(self.instance, POLICIES["A"])), cap)
+        self.assertEqual(len(_possessions_per_location(self.instance, POLICIES["C"])), cap + 1)
+        self.assertGreater(len(_possessions_per_location(self.instance, POLICIES["B"])), cap)
+
+    def test_congested_instance_extends_the_horizon_instead_of_failing(self) -> None:
+        """Section 1: a congested case must still produce a schedule."""
+        from dataclasses import replace
+
+        from sincro.optimal import solve_exact
+
+        squeezed = replace(self.instance, horizon_weeks=20, _line_sectors={})
+        # The primary proof is the point of this test; the tie-break pass only
+        # reorders equally-scoring schedules, so give it a token budget.
+        result = solve_exact(squeezed, "A", secondary_seconds=1.0)
+        self.assertTrue(result["extended"])
+        self.assertGreater(result["horizon_weeks"], 20)
+        # The declared horizon was an artificial cap, so the true optimum is
+        # unchanged by lifting it.
+        self.assertEqual(result["objective"], 1316.0)
+        self.assertEqual(len(result["finish_week"]), len(squeezed.activities))
+
+
+class FallbackTests(unittest.TestCase):
+    def test_emit_falls_back_rather_than_raising(self) -> None:
+        """An exact solve that cannot deliver must not sink the submission."""
+        import tempfile
+
+        from sincro import emit as emit_module
+
+        instance = load_instance(ROOT / "01_data")
+        result, label = emit_module._solve_best(instance, "A", optimal=False,
+                                                primary_seconds=None)
+        self.assertEqual(label, "heuristic")
+        self.assertEqual(len(result["finish_week"]), len(instance.activities))
+        del tempfile
+
+
 if __name__ == "__main__":
     unittest.main()

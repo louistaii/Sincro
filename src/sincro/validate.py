@@ -12,6 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .analyse import ACTIVITY_NUDGE, CONTRACT_WEIGHT
+from . import rules
 from .rules import night_yield
 from .instance import Instance, load_instance
 
@@ -133,7 +134,10 @@ def validate(inst: Instance, sub_dir: str | Path, scenario: str | None = None) -
 
     for (loc, wk, label), acts in sorted(groups.items()):
         kinds = [inst.contracts[inst.activities[x].contract_number].access_type for x in acts]
-        if len(acts) > 4 or ('PM' in kinds and len(acts) > 1) or kinds.count('PC') > 1:
+        exclusive = [k for k in kinds if rules.ACCESS_ROLES[k]['exclusive']]
+        hosts = [k for k in kinds if rules.ACCESS_ROLES[k]['hosts']]
+        if (len(acts) > rules.MAX_CO_SHARE or (exclusive and len(acts) > 1)
+                or len(exclusive) > 1 or len(hosts) > 1):
             bad('mix', f'wk{wk} {loc} group {label}: illegal mix {sorted(kinds)}')
         local_nights = defaultdict(set)
         for aid in acts:

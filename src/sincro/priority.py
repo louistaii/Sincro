@@ -29,6 +29,7 @@ from pathlib import Path
 
 from .extract import Activity, Contract, load_all
 from .instance import Instance
+from . import rules
 from .rules import ACTIVITY_NUDGE, CONTRACT_WEIGHT
 
 
@@ -211,8 +212,24 @@ def legacy_main() -> None:
 # Scenario-aware, penalty-calibrated ranking used by the schedulers.
 # --------------------------------------------------------------------------
 
-ACCESS_MULTIPLIER = {"PM": 1.35, "PC": 1.20, "C": 1.00}
-ECLO_COST = 5.0
+# How much harder each access type is to place, and so how early it should be
+# dispatched. Derived from the role rather than the code: a possession taken
+# alone is the hardest to fit, one that hosts co-workers next, a co-worker
+# easiest. An instance naming its types differently still gets the right
+# ordering.
+EXCLUSIVE_PRESSURE = 1.35
+HOST_PRESSURE = 1.20
+CO_WORKER_PRESSURE = 1.00
+ECLO_COST = float(rules.ECLO_NIGHT_WEIGHT)
+
+
+def _access_multiplier(access_type: str) -> float:
+    role = rules.ACCESS_ROLES[access_type]
+    if role["exclusive"]:
+        return EXCLUSIVE_PRESSURE
+    if role["hosts"]:
+        return HOST_PRESSURE
+    return CO_WORKER_PRESSURE
 
 
 @dataclass(frozen=True)
@@ -278,7 +295,10 @@ def calculate_priority(
     activity = inst.activities[activity_id]
     contract = inst.contracts[activity.contract_number]
     remaining = float(activity.total_accesses if remaining_accesses is None else remaining_accesses)
-    remaining_eclo = None if scenario == "B" else max(0, 2 - eclo_used)
+    # An activity gets at most one access-night a week, so Scenario C's
+    # window width is also the most ECLO nights it can ever use.
+    remaining_eclo = (None if scenario == "B"
+                      else max(0, rules.ECLO_WINDOW_WEEKS - eclo_used))
     duration = _minimum_duration_weeks(remaining, scenario, remaining_eclo)
 
     days_to_due = (contract.planned_completion_date - as_of_date).days + 1
@@ -298,7 +318,7 @@ def calculate_priority(
 
     buffer_depth, mirrors = inst.buffer_rules[contract.nature_of_activity]
     nature_multiplier = 1 + 0.10 * buffer_depth + (0.15 if mirrors else 0)
-    access_multiplier = ACCESS_MULTIPLIER[contract.access_type]
+    access_multiplier = _access_multiplier(contract.access_type)
     footprint = inst.closure_footprint(activity)
     closure_pressure = (
         sum(1 / max(1, inst.supply[location]) for location in footprint) / len(footprint)

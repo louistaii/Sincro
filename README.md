@@ -80,13 +80,61 @@ Priority-2 and Priority-3 delays. More search may improve them.
 The optional exact backend produces the checked-in `out/optimal-*` schedules.
 It first proves the official primary objective, fixes that value, and then
 spends up to 30 seconds improving priority-weighted completion time among equal
-primary solutions.
+primary solutions. Install it with `pip install -r requirements-optional.txt`; without it every
+entry point falls back to the heuristic and names that in its `solver` field.
 
-| Scenario | Proven primary penalty | Contract overrun days | ECLO nights | Excess location-nights |
-| --- | ---: | ---: | ---: | ---: |
-| A | 131.6 | 42 | 0 | 0 |
-| B | 50.0 | 0 | 10 | 0 |
-| C | 44.5 | 21 | 4 | 0 |
+| Scenario | Proven primary penalty | Contract overrun days | ECLO nights | Excess location-nights | Contracts late |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| A | 131.6 | 42 | 0 | 0 | 5 of 14 |
+| B | 50.0 | 0 | 10 | 0 | 0 of 14 |
+| C | 44.5 | 21 | 4 | 0 | 3 of 14 |
+
+Against the heuristic's 316.4 / 110 / 229.3 that is 58% / 55% / 81% less
+penalty. No Priority-1 contract is late in any scenario, under either backend.
+Proving all three takes roughly 150 seconds on this instance.
+
+### Which solver runs when
+
+| Entry point | Backend |
+| --- | --- |
+| `sincro.emit` (default) | heuristic |
+| `sincro.emit --optimal` | exact, no time cap, falls back to the heuristic |
+| `sincro.web` (judges' upload) | exact, 90 s per scenario, falls back |
+
+Falling back is deliberate. Section 1 of the brief forbids ever declaring a
+case impossible, so an exact solve that is unavailable, out of time, or
+infeasible degrades to the heuristic rather than raising; the report's
+`solver` field names which one produced the answer key.
+
+`horizon_weeks` is treated as a starting point, not a ceiling. If the workload
+cannot fit inside the declared horizon the model grows it and re-solves, which
+cannot change the optimum of an instance that already fitted, because later
+weeks only ever add penalty. A 20-week version of the public instance is
+infeasible as declared, yet still returns the same proven optimum of 131.6.
+
+The priority tie-break is anchored to `horizon_start`, not to `date.today()`.
+Anchoring on the wall clock made the emitted schedule depend on which day the
+solver happened to run -- the same instance produced different answer keys on
+different days, with tie-break weights varying by five orders of magnitude.
+
+## One model, three policies
+
+The three scenarios share a single CP-SAT model. The physics -- spans,
+buffers, capacity, legal mixes, workfronts, co-sharing, predecessors -- is
+identical in every scenario and is built once. Only policy differs:
+
+| | A | B | C |
+| --- | --- | --- | --- |
+| ECLO | forbidden | free | one window per line |
+| Planned dates | soft | **hard** | soft |
+| Overrun scored | yes | no | yes |
+| Excess per location-week | 0 | unbounded | 1 |
+| May extend horizon | yes | no (dates bind) | yes |
+
+Possessions modelled per location-week follow the instance: nominal
+`supply_capacity` plus whatever excess the scenario tolerates. Modelling a
+fixed four would have denied C the extra possession the brief grants it, and
+would break outright on an instance whose supply exceeds four.
 
 ## Scheduling policies
 
@@ -185,6 +233,7 @@ omitting its workload.
 01_data/                  Eight public instance CSVs
 src/sincro/instance.py     Parsing, topology, spans and closure geometry
 src/sincro/rules.py        Constants fixed by the brief, not by the instance
+src/sincro/optimal.py      Exact CP-SAT backend, one model with three policies
 src/sincro/construct.py    Complete construction and bounded heuristic search
 src/sincro/optimal.py      Exact primary optimisation and priority tie-breaking
 src/sincro/emit.py         Three-file output, validated before publication

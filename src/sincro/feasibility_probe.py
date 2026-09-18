@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 from collections import defaultdict
 
+from . import rules
 from .analyse import MAX_CO_SHARE, cuts_traction_power, earliest_schedule
 from .instance import load_instance
 
@@ -58,12 +59,12 @@ def main(data_dir: str = "01_data") -> None:
 
     # ---- legal-mix violations that co-sharing cannot resolve -------------
     print("\n" + "-" * 78)
-    print("LEGAL-MIX PROBLEMS (PM must be alone; <=1 PC per possession)")
+    print("LEGAL-MIX PROBLEMS (an exclusive possession must be alone; <=1 host each)")
     print("-" * 78)
     pm_clashes = []
     for (loc, wk), acts in sorted(foot_load.items()):
         kinds = {x: inst.contracts[inst.activities[x].contract_number].access_type for x in acts}
-        pms = [x for x, t in kinds.items() if t == "PM"]
+        pms = [x for x, t in kinds.items() if rules.ACCESS_ROLES[t]["exclusive"]]
         if pms and len(acts) > 1:
             pm_clashes.append((loc, wk, pms, [x for x in acts if x not in pms]))
     if pm_clashes:

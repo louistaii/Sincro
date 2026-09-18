@@ -22,6 +22,18 @@ ECLO_YIELD = 1.5
 # Section 2.4 rule 5: one PM alone, or one PC + <=3 C, or <=4 C, per possession.
 MAX_CO_SHARE = 4
 
+# Section 2.5 objective terms, per unit.
+ECLO_NIGHT_WEIGHT = 5
+EXCESS_ACCESS_NIGHT_WEIGHT = 7
+
+# Section 2.4 rule 10: Scenario C's ECLO nights on a line must fall inside one
+# continuous window of at most this many calendar weeks.
+ECLO_WINDOW_WEEKS = 2
+
+# Section 2.5: Scenario C soft-scores up to this much capacity excess per
+# location-week; A allows none and B leaves it unbounded.
+C_EXCESS_ALLOWANCE = 1
+
 # Section 2.3. ``exclusive`` takes the possession alone; ``hosts`` may open one
 # that co-workers join; ``joins`` may co-share a possession opened by a host or
 # by other co-workers.

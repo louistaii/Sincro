@@ -34,14 +34,31 @@ def write_submission(inst: Instance, result: dict, out: Path, scenario: str) -> 
             writer.writerows(rows[filename])
 
 
-def emit(data_dir: str, out_dir: str, scenario: str = 'A', *, optimal: bool = False) -> dict:
+def _solve_best(inst: Instance, scenario: str, optimal: bool,
+                primary_seconds: float | None) -> tuple[dict, str]:
+    """Prove the optimum when asked and able; otherwise schedule heuristically.
+
+    The brief forbids ever declaring a case impossible, so an exact solve that
+    fails -- unavailable, out of time, or infeasible even after the horizon is
+    extended -- degrades to the heuristic rather than raising.
+    """
+    if not optimal:
+        return solve(inst, scenario), 'heuristic'
+    try:
+        from .optimal import ExactSolveFailed, solve_exact
+    except ImportError:
+        return solve(inst, scenario), 'heuristic (OR-Tools not installed)'
+    try:
+        result = solve_exact(inst, scenario, primary_seconds=primary_seconds)
+    except ExactSolveFailed:
+        return solve(inst, scenario), 'heuristic (no exact schedule found)'
+    return result, 'exact' if result.get('proven') else 'exact (not proven optimal)'
+
+
+def emit(data_dir: str, out_dir: str, scenario: str = 'A', *, optimal: bool = False,
+         primary_seconds: float | None = None) -> dict:
     inst = load_instance(data_dir)
-    if optimal:
-        from .optimal import solve_scenario_a, solve_scenario_b, solve_scenario_c
-        result = {'A': solve_scenario_a, 'B': solve_scenario_b,
-                  'C': solve_scenario_c}[scenario](inst)
-    else:
-        result = solve(inst, scenario)
+    result, solver = _solve_best(inst, scenario, optimal, primary_seconds)
     with tempfile.TemporaryDirectory(prefix='sincro-') as temporary:
         staging = Path(temporary)
         write_submission(inst, result, staging, scenario)
@@ -52,6 +69,7 @@ def emit(data_dir: str, out_dir: str, scenario: str = 'A', *, optimal: bool = Fa
         out.mkdir(parents=True, exist_ok=True)
         for name in SCHEMAS:
             shutil.copyfile(staging / name, out / name)
+    report['solver'] = solver
     return report
 
 
@@ -67,7 +85,8 @@ def main() -> None:
         for scenario in ('A', 'B', 'C') if args.scenario == 'all' else (args.scenario,):
             out = str(Path(args.out_dir) / scenario) if args.scenario == 'all' else args.out_dir
             report = emit(args.data_dir, out, scenario, optimal=args.optimal)
-            print(json.dumps({'output': out, 'feasible': report['feasible'], **report['soft_scores']}))
+            print(json.dumps({'output': out, 'feasible': report['feasible'],
+                              'solver': report['solver'], **report['soft_scores']}))
     except (OSError, ValueError, KeyError, csv.Error) as exc:
         parser.exit(1, f'Scheduling failed: {exc}\n')
 

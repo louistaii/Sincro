@@ -93,6 +93,42 @@ package, so `ModuleNotFoundError`); nothing imported it and no test covered it,
 which is why the suite still passed. Its import is fixed and it now takes a data
 directory argument, but it remains standalone and outside the solver path.
 
+## Exact solver review
+
+The CP-SAT backend is a large, real improvement: it proves the Section 2.5
+objective rather than approximating it, cutting the public scores from
+316.4/110/229.3 to 131.6/50/44.5. Splitting policy per scenario is the right
+call -- A carries no ECLO variables at all, B turns planned dates into a domain
+restriction, and only C needs the per-line window. Four issues were fixed.
+
+| Issue | Why it mattered | Change |
+| --- | --- | --- |
+| A congested instance raised `INFEASIBLE` | Section 1 forbids declaring a case impossible; a 20-week version of the public instance crashed with an uncaught `RuntimeError` | Treat `horizon_weeks` as a start, not a ceiling: grow and re-solve, then fall back to the heuristic. The same instance now returns the same proven optimum, 131.6 |
+| The tie-break was anchored to `date.today()` | The emitted schedule depended on the day it was generated; weights moved by five orders of magnitude between dates and the top-ranked activity changed | Anchor on `horizon_start`, so a given instance always yields the same answer key |
+| Possessions per location-week were fixed at four | Denied C the extra possession the brief grants it, and silently under-models any instance whose `supply_capacity` exceeds four | Derive from the instance: nominal supply plus the scenario's own excess allowance |
+| An exclusive possession was only capped at one per group, not kept alone | The model could emit a `PM` co-sharing with three co-workers, which its own validator rejects. The public instance hides this because its only `PM` contract is `Live`, so the buffer rule happens to cover it | Enforce "alone in its possession" directly, driven by `rules.ACCESS_ROLES` |
+
+The two CP-SAT models also duplicated the railway physics -- spans, buffers,
+capacity, mixes, workfronts, predecessors -- so a fix in one would not reach
+the other. They are now one `_build` plus a `ScenarioPolicy`. All three proven
+optima are unchanged by the merge.
+
+`PM`/`PC` literals, a hardcoded `<= 4`, the objective's `5` and `7`, the
+two-week ECLO window and `ACCESS_MULTIPLIER` had reappeared across
+`optimal.py`, `priority.py`, `validate.py` and `feasibility_probe.py`. All now
+come from `rules.py`, which is the only module naming an access code.
+
+The web app -- the judges' live upload path -- called the heuristic, so an
+uploaded instance would have scored 316.4/110/229.3 while the repository
+advertised 131.6/50/44.5. It now reaches for the exact solver with a 90-second
+budget per scenario and falls back rather than hanging.
+
+**Still open:** OR-Tools is an undeclared dependency (no `requirements.txt` or
+`pyproject.toml`), so a judge cloning the repository gets the heuristic
+silently. The exact solve takes roughly 150 seconds for all three scenarios on
+the 54-activity public instance; a larger hidden instance may not prove
+optimality inside the web budget, in which case the fallback decides the score.
+
 ## Remaining competition deliverables and limitations
 
 - **Reference validation:** obtain `trackaccess`, its expansion rules and the

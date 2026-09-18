@@ -15,6 +15,10 @@ from .emit import emit
 from .instance import load_instance
 
 DATA = Path(__file__).resolve().parents[2] / '01_data'
+
+# An upload must answer promptly. Give CP-SAT this long per scenario to prove
+# the optimum; past it, emit() falls back to the heuristic rather than hang.
+EXACT_SECONDS_PER_SCENARIO = 90.0
 INPUT_FILES = (
     '01_LINES.csv', '02_STATIONS.csv', '03_SECTORS.csv', '04_LOCATION_SUPPLY.csv',
     '05_BUFFER_LOCATION.csv', '06_PARAMETERS.csv', '07_PROJECT_DETAILS.csv', '08_ACTIVITY_DETAILS.csv',
@@ -41,7 +45,8 @@ def run_request(payload: dict) -> dict:
         for choice in ('A', 'B', 'C') if scenario == 'all' else (scenario,):
             output = root / choice
             try:
-                report = emit(str(data), str(output), choice)
+                report = emit(str(data), str(output), choice, optimal=True,
+                              primary_seconds=EXACT_SECONDS_PER_SCENARIO)
             except ValueError as exc:
                 results.append({'scenario': choice, 'error': str(exc)})
                 continue
