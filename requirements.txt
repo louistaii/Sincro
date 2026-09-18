@@ -1,4 +1,5 @@
-# The web app and its serverless function run on the standard library alone.
-# Add ortools>=9.8 here to enable exact CP-SAT solving (see requirements-optional.txt),
-# but note it adds ~100MB to the function bundle and the exact solve can exceed
-# Vercel's function duration limit (60s on Hobby) for multi-scenario runs.
+# The web app runs on the standard library alone.
+# Add ortools>=9.8 here to enable exact CP-SAT solving instead of the heuristic
+# fallback. Cloud Run's container size and request-timeout limits comfortably
+# fit it; adjust --timeout in the deploy command if you enable exact mode for
+# multi-scenario ("all") runs, since each scenario can take up to 90s.

@@ -56,18 +56,23 @@ Uploads are processed in temporary directories and removed after the response.
 A failure in B is shown explicitly while successful A/C results remain available.
 The server binds to localhost by default for local use.
 
-### Deploying to Vercel
+### Deploying to Google Cloud Run
 
-`api/solve.py`, `vercel.json` and `requirements.txt` at the repo root make this
-deployable as a Vercel serverless function with no code changes to the app
-itself. `vercel.json` sets `PYTHONPATH=src` so the function can import the
-`sincro` package, and rewrites `/` to `src/sincro/web.html` and `/solve` to
-`/api/solve`, so the existing frontend works unmodified. Exact/optimal solves
-can take up to 90 s per scenario (`EXACT_SECONDS_PER_SCENARIO`), which exceeds
-Vercel Hobby's 60 s function limit for multi-scenario runs -- fast preview
-(heuristic) mode is unaffected. `requirements.txt` is intentionally empty
-(stdlib only); adding `ortools` enables exact solving but adds ~100 MB to the
-function bundle.
+The `Dockerfile` at the repo root packages `src/`, `01_data/` and
+`requirements.txt` into a container that runs the same `sincro.web` server
+unmodified, listening on `$PORT` (Cloud Run sets this; the container defaults
+to 8080 if unset). Deploy with:
+
+```bash
+gcloud run deploy sincro --source . --region <region> --allow-unauthenticated
+```
+
+Cloud Run's default request timeout is 5 minutes (configurable up to 60 with
+`--timeout`), well past the 90 s per scenario (`EXACT_SECONDS_PER_SCENARIO`)
+that exact/optimal solving can take even across all three scenarios --
+unlike a serverless-function host, no code changes or timeout workarounds
+are needed. `requirements.txt` is stdlib-only by default; uncomment
+`ortools` there to enable exact solving in the deployed container.
 
 ## Generate and validate answer keys
 
@@ -282,9 +287,8 @@ src/sincro/web.html        Browser interface and access timeline
 src/sincro/analyse.py      Capacity and optimistic critical-path analysis
 src/sincro/extract.py      Column-faithful CSV reader for standalone analysis
 src/sincro/priority.py     Legacy tunable and scenario-aware urgency rankings
-api/solve.py              Vercel serverless entry point for POST /solve
-vercel.json               Vercel routing/env config
-requirements.txt          Runtime dependencies for the deployed function (stdlib only)
+Dockerfile                Container image for Google Cloud Run
+requirements.txt          Runtime dependencies for the deployed container (stdlib only)
 ```
 
 ```bash
