@@ -198,11 +198,6 @@ def load_all(data_dir: str | Path) -> dict:
     }
 
 
-if __name__ == "__main__":
-    from pathlib import Path
-
-    script_dir = Path(__file__).parent.parent.parent
-    FOLDER_PATH = f"{script_dir}/01_data"
-    data = load_all(FOLDER_PATH)
-    for name, rows in data.items():
-        print(f"{name}: {len(rows)} rows, e.g. {rows[0]}")
+    #data = load_all(FOLDER_PATH)
+    #for name, rows in data.items():
+    #   print(f"{name}: {len(rows)} rows, e.g. {rows[0]}")
