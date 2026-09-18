@@ -2,7 +2,7 @@
 
 A dependency-free Python planner for the dual-line PS1 instance. It delivers the
 complete workload, compares Scenarios A/B/C, checks the submission files, and
-provides a browser interface for uploading the eight instance CSVs.
+provides a browser interface for uploading the eight instance CSV or Excel files.
 
 **Validation is local, not a certification from the judges.** The reference
 `trackaccess` package, `02_references/`, and `03_submission_sample/` are not in
@@ -13,19 +13,25 @@ The full brief is kept verbatim in [docs/PROBLEM_STATEMENT.txt](docs/PROBLEM_STA
 
 ## Run the web app
 
-Requires Python 3.10 or later; no packages to install. From the repository root:
+Requires Python 3.10 or later. The fast preview has no third-party dependencies;
+install `ortools` to use the default exact optimiser. From the repository root:
 
 ```bash
 PYTHONPATH=src python3 -m sincro.web
 ```
 
-Open <http://127.0.0.1:8000>. Select all eight instance CSVs and a scenario, or
-choose **Use public example** to run the bundled data. The app shows:
+Open <http://127.0.0.1:8000>. Select all eight named instance files as CSV or
+single-sheet XLSX workbooks and choose a scenario, or select **Use public example**
+to run the bundled data. Exact optimisation is the default; **Fast preview** uses
+the deterministic heuristic for a quicker planning pass. The app shows:
 
 - Completion of every activity, local validation, and the scenario's penalty.
-- A weekly access timeline, ECLO nights, delayed work, locations and predecessors.
-- Capacity hotspots and the full validation report.
+- A filterable weekly calendar, access timeline, contract summary, ECLO nights,
+  delayed work, locations and predecessors.
+- Capacity hotspots and the full local validation report.
 - A ZIP per successful scenario containing exactly the three required CSV files.
+- Separate iCalendar (`.ics`) and calendar-summary CSV downloads for stakeholder
+  calendars and reporting.
 
 Uploads are processed in temporary directories and removed after the response.
 A failure in B is shown explicitly while successful A/C results remain available.
