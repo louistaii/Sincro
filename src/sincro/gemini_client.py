@@ -14,7 +14,7 @@ import re
 import urllib.error
 import urllib.request
 
-DEFAULT_MODEL = 'gemini-2.5-flash'
+DEFAULT_MODEL = 'gemini-3.5-flash'
 API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 REQUEST_TIMEOUT_SECONDS = 30
 MAX_OUTPUT_TOKENS = 8192

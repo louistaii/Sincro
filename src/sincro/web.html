@@ -33,7 +33,7 @@
 <body>
 <div class="topbar"><div class="shell nav"><div class="brand"><div class="brandmark" aria-hidden="true"></div><div><strong>Sincro</strong><small>Rail access planning</small></div></div><button id="theme" class="theme-toggle" type="button" title="Switch appearance: follow system, always light, or always dark"><span id="theme-icon" class="theme-icon" aria-hidden="true">◐</span><span id="theme-label">Auto</span></button></div></div>
 <main class="shell">
-<section class="hero"><div class="eyebrow">Sector Possession planning · LTA</div><h1>Plan Reliably,<br><span>Change Flexibly.</span></h1><p class="lead">Optimised access plans that adapt, on one shared calendar.</p><div class="hero-stats"><div class="hero-stat"><b>3</b><span>planning scenarios</span></div><div class="hero-stat"><b>8</b><span>required datasets</span></div><div class="hero-stat"><b>1</b><span>clear schedule</span></div></div></section>
+<section class="hero"><div class="eyebrow">Sector Possession planning · LTA</div><h1>Plan Reliably,<br><span>Change Flexibly.</span></h1><p class="lead">Optimised access plans that adapt, on one shared calendar.</p><div class="hero-stats"><div class="hero-stat"><b>3</b><span>Planning Scenarios</span></div><div class="hero-stat"><b>8</b><span>Required Datasets</span></div><div class="hero-stat"><b>1</b><span>Clear Schedule</span></div></div></section>
 <section class="planner" aria-labelledby="upload-title"><div class="section-head"><div class="step"><span class="step-no">1</span><div><h2 id="upload-title">Upload planning data</h2><p>Add the eight required sheets as CSV or Excel files. We check every dataset before scheduling.</p></div></div></div>
 <div id="drop" class="upload-zone" tabindex="0" role="button" aria-controls="files"><div class="upload-icon">⇧</div><h3>Drop all eight sheets here</h3><p>or <button type="button" class="browse" id="browse">browse files</button> · CSV and single-sheet XLSX supported</p><input id="files" type="file" multiple accept=".csv,.xlsx"><div id="file-grid" class="file-grid" aria-live="polite"></div></div>
 <div class="example-row"><span>Don't have files on hand?</span><button id="example" type="button" class="btn btn-quiet">Use public test set</button><button id="clear-files" type="button" class="btn btn-quiet">Clear files</button></div>
@@ -52,7 +52,7 @@
   <form id="ai-form" class="ai-compose"><label for="ai-prompt">Ask a question or request a change</label><textarea id="ai-prompt" maxlength="8000" aria-describedby="ai-help" placeholder="Explain delays, compare scenarios, or describe an activity change." required></textarea><p id="ai-help">Changes update the selected plan after solver validation. The change date sets the protected 14-day window.</p><div id="ai-status" class="ai-status" role="status" aria-live="polite"></div><div class="ai-row"><button id="ai-clear" type="button" class="btn btn-secondary">Clear chat</button><p class="ai-help">Ctrl / ⌘ + Enter to send</p><button id="ai-send" type="submit" class="btn btn-primary">Send</button></div></form>
 </div>
 <dialog id="change-dialog">
-<div class="change-head"><div><h2>Append &middot; edit &middot; postpone</h2><p id="change-subtitle"></p></div><button id="change-close" type="button" class="icon-btn" aria-label="Close">&times;</button></div>
+<div class="change-head"><div><h2>Append &middot; Edit &middot; Postpone</h2><p id="change-subtitle"></p></div><button id="change-close" type="button" class="icon-btn" aria-label="Close">&times;</button></div>
 <div class="change-body">
 <div class="change-tabs"><button type="button" class="change-tab active" data-change-tab="append">Append activity</button><button type="button" class="change-tab" data-change-tab="edit">Edit activity/contract</button><button type="button" class="change-tab" data-change-tab="postpone">Postpone access</button></div>
 <div class="change-date-field field"><label for="change-date">Change received on</label><input id="change-date" type="date"></div>
@@ -83,14 +83,24 @@ async function filePayload(){if(selected.size!==8)throw Error('Upload all eight 
 function makeUrl(encoded,type){const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0)),url=URL.createObjectURL(new Blob([bytes],{type}));urls.push(url);return url}
 function downloadLink(text,encoded,type,name,primary=false){const a=el('a',`btn ${primary?'btn-primary':'btn-quiet'}`,text);a.href=makeUrl(encoded,type);a.download=name;return a}
 function fmtDate(value){return new Intl.DateTimeFormat('en-SG',{day:'2-digit',month:'short',year:'numeric'}).format(new Date(`${value}T00:00:00`))}function weekEnd(value){const d=new Date(`${value}T00:00:00`);d.setDate(d.getDate()+6);return localISO(d)}
+async function requestJson(url,options){
+  if(window.location.protocol==='file:')throw Error('Start the Python Sincro server and open http://127.0.0.1:8000 instead of opening this file directly.');
+  const response=await fetch(url,options),body=await response.text();let data;
+  try{data=JSON.parse(body)}catch(error){
+    const message=response.status===403?'The page server rejected the request. Start the Python Sincro server and open its URL instead of using Live Server or the VS Code preview.':'The server returned a non-JSON response. Check that this page is connected to the Python Sincro server.';
+    throw Error(`${message} (HTTP ${response.status})`);
+  }
+  if(!data||typeof data!=='object'||Array.isArray(data))throw Error(`The server returned an invalid JSON response. (HTTP ${response.status})`);
+  if(!response.ok||data.error)throw Error(typeof data.error==='string'?data.error:`Request failed (HTTP ${response.status}).`);
+  return data;
+}
 async function run(){
   const version=beginOperation('solve');if(version===null)return;
   $('status').className='status';$('status').textContent='';$('processing').classList.add('on');
   try{
     const files=usingExample?null:await filePayload();
-    const response=await fetch('/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenario:scenario(),optimal:true,files})});
-    const data=await response.json();if(version!==operationVersion)return;
-    if(!response.ok||data.error)throw Error(data.error||'Scheduling request failed.');
+    const data=await requestJson('/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenario:scenario(),optimal:true,files})});
+    if(version!==operationVersion)return;
     if(!Array.isArray(data.results)||!data.results.length||!Array.isArray(data.locations)||typeof data.horizon_start!=='string'||!Number.isInteger(data.horizon_weeks)||data.results.some(result=>!result||!['A','B','C'].includes(result.scenario)||(!result.error&&!validUpdatedResult(result,result.scenario))))throw Error('The scheduler returned an invalid response. Your current plan is unchanged.');
     urls.forEach(URL.revokeObjectURL);urls=[];$('results').replaceChildren();resultStates.clear();changeLogs.clear();
     conversations.clear();$('ai-status').textContent='';
@@ -117,9 +127,8 @@ function baselineRows(result){return result.activities.flatMap(a=>a.nights.map(n
 async function applyChange(){if(operation)return;const target=currentChange,state=resultStates.get(target);if(!state)return;const pane=document.querySelector('.change-tab.active').dataset.changeTab;let change;if(pane==='append'){if(appendCsvText)change={kind:'append_csv',csv:appendCsvText};else change={kind:'append',activities:[{activity_id:$('append-id').value.trim(),contract_number:$('append-contract').value,activity_type:$('append-type').value.trim(),start_location_id:$('append-start-loc').value,end_location_id:$('append-end-loc').value,total_accesses:$('append-days').value,planned_start_date:$('append-start').value,predecessor_activity_id:$('append-predecessor').value,activity_priority:$('append-priority').value}]} }else if(pane==='edit'){change=$('edit-scope').value==='activity'?{kind:'edit_activity',activity_id:$('edit-target').value,total_accesses:$('edit-days').value,planned_start_date:$('edit-date').value}:{kind:'edit_contract',contract_number:$('edit-target').value,total_accesses:$('edit-days').value,planned_completion_date:$('edit-date').value}}else{const [activity_id,week,access_seq]=($('postpone-access').value||'').split('|');change={kind:'postpone',activity_id,week:Number(week),access_seq:Number(access_seq),reason:$('postpone-reason').value.trim()}}const cumulative=[...(changeLogs.get(target)||[]),change],version=beginOperation('change');if(version===null)return;
   $('change-status').className='change-status';$('change-status').textContent='Protecting the near-term plan and optimising the change…';
   try{
-    const response=await fetch('/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenario:target,optimal:true,files:sourceFiles,changes:cumulative,schedule_changes:[change],baseline:baselineRows(state.result),as_of_date:$('change-date').value})});
-    const data=await response.json();if(version!==operationVersion)return;
-    if(!response.ok||data.error)throw Error(data.error||'Change request failed');
+    const data=await requestJson('/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenario:target,optimal:true,files:sourceFiles,changes:cumulative,schedule_changes:[change],baseline:baselineRows(state.result),as_of_date:$('change-date').value})});
+    if(version!==operationVersion)return;
     const revised=data.results?.[0];if(!validUpdatedResult(revised,target))throw Error(revised?.error||'The revised schedule was not validated. Your current plan is unchanged.');
     renderResult(revised,data);changeLogs.set(target,cumulative);$('change-dialog').close();refreshAiContext();
     $('ai-status').className='ai-status';$('ai-status').textContent=`Scenario ${target} was updated. Your next question uses the revised plan.`;
@@ -205,9 +214,8 @@ async function askAi(){
   const version=beginOperation('chat');if(version===null)return;
   renderConversation();appendMessage('user',prompt);setAiStatus('Checking your question against the current planning context…');
   try{
-    const response=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const data=await response.json();if(version!==operationVersion)return;
-    if(!response.ok||data.error)throw Error(data.error||'The assistant could not answer. Please try again.');
+    const data=await requestJson('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(version!==operationVersion)return;
     if(typeof data.answer!=='string'||!data.answer.trim())throw Error('The assistant returned an empty answer. Please try again.');
     let updatedScope=null;
     if(data.applied){
@@ -223,7 +231,7 @@ async function askAi(){
   }finally{if(version===operationVersion){endOperation(version);if($('ai-panel').classList.contains('show'))$('ai-prompt').focus()}}
 }
 async function checkAssistantStatus(){
-  try{const response=await fetch('/assistant-status');if(!response.ok)throw Error('unavailable');const data=await response.json();$('ai-provider').textContent=data.configured?`Powered by Gemini${data.model?` · ${data.model}`:''}`:'The assistant is not configured. Contact your Sincro administrator.';$('ai-provider').classList.toggle('error',!data.configured)}
+  try{const data=await requestJson('/assistant-status');$('ai-provider').textContent=data.configured?`Powered by Gemini${data.model?` · ${data.model}`:''}`:'The assistant is not configured. Contact your Sincro administrator.';$('ai-provider').classList.toggle('error',!data.configured)}
   catch(error){$('ai-provider').textContent='Assistant availability could not be checked. Send a question to try the connection.'}
 }
 $('ai-fab').addEventListener('click',()=>toggleAiPanel(!$('ai-panel').classList.contains('show')));

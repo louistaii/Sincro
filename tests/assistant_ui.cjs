@@ -69,6 +69,8 @@ async function main() {
     const errors = [], requests = [];
     let askResponse = { answer: 'A uses fixed supply.', applied: false };
     let solveResponse = makeData(), askGate = null, solveGate = null;
+    let askRawResponse = null, solveRawResponse = null;
+    const forbiddenHtml = { status: 403, contentType: 'text/html', body: '<html><body>Forbidden</body></html>' };
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', async route => {
       const pathname = new URL(route.request().url()).pathname;
@@ -80,9 +82,11 @@ async function main() {
       requests.push({ path: pathname, payload: route.request().postDataJSON() });
       if (pathname === '/ask') {
         if (askGate) await askGate.promise;
+        if (askRawResponse) return route.fulfill(askRawResponse);
         return route.fulfill({ status: askResponse.error ? 400 : 200, json: askResponse });
       }
       if (solveGate) await solveGate.promise;
+      if (solveRawResponse) return route.fulfill(solveRawResponse);
       return route.fulfill({ status: solveResponse.error ? 400 : 200, json: solveResponse });
     });
     const idle = () => page.waitForFunction(() => operation === '');
@@ -108,7 +112,18 @@ async function main() {
     await page.locator('#ai-fab').click();
     await page.locator('#ai-provider').filter({ hasText: 'fixture-model' }).waitFor();
     assert.equal(await page.locator('#ai-context-links').isVisible(), false);
+    // Static preview servers may return HTML/403: explain the correct server,
+    // retain the draft, and allow a successful retry without duplicating turns.
+    askRawResponse = forbiddenHtml;
     await ask('Explain scenario A.');
+    assert.match(await page.locator('#ai-log .error').textContent(), /Python Sincro server.*HTTP 403/);
+    assert.equal(await page.locator('#ai-prompt').inputValue(), 'Explain scenario A.');
+    assert.equal(await page.locator('#ai-send').isDisabled(), false);
+    assert.equal(await page.evaluate(() => conversation('all').length), 0);
+    askRawResponse = null;
+    await ask('Explain scenario A.');
+    assert.equal(await page.locator('#ai-log .user').count(), 1);
+    assert.deepEqual(requests.at(-1).payload.history, []);
     assert.deepEqual(requests.at(-1).payload.plans, {});
     assert.equal(requests.at(-1).payload.files, null);
     askResponse = { answer: '<img src=x onerror="window.hacked=true">', applied: false };
@@ -212,6 +227,15 @@ async function main() {
     await page.locator('[data-change-tab="edit"]').click();
     await page.locator('#edit-days').fill('3');
     solveResponse = makeData([makeResult('A', 'signed-A-manual')]);
+    const beforeManualServerError = await snapshot();
+    solveRawResponse = forbiddenHtml;
+    await page.locator('#change-apply').click();
+    await idle();
+    assert.deepEqual(await snapshot(), beforeManualServerError);
+    assert.match(await page.locator('#change-status').textContent(), /Python Sincro server.*HTTP 403/);
+    assert.equal(await page.locator('#change-dialog').isVisible(), true);
+    assert.equal(await page.locator('#change-apply').isDisabled(), false);
+    solveRawResponse = null;
     await page.locator('#change-apply').click();
     await idle();
     await page.locator('#result-A [data-chat-scenario]').click();
@@ -240,6 +264,13 @@ async function main() {
     await idle();
     assert.deepEqual(await snapshot(), beforeFailedSolve);
     assert.match(await page.locator('#status').textContent(), /replacement input set is invalid/);
+    solveRawResponse = forbiddenHtml;
+    await page.locator('#run').click();
+    await idle();
+    assert.deepEqual(await snapshot(), beforeFailedSolve);
+    assert.match(await page.locator('#status').textContent(), /Python Sincro server.*HTTP 403/);
+    assert.equal(await page.locator('#run').isDisabled(), false);
+    solveRawResponse = null;
     await page.locator('#ai-fab').click();
 
     // The responsive panel keeps the latest reply and composer within reach.
@@ -277,7 +308,7 @@ async function main() {
 
     assert.deepEqual(errors, []);
     console.log('PASS: assistant context, history, safe rendering, updates, retries, request locks,');
-    console.log('      manual changes, failed solves, failed scenarios, scope guards, and mobile layout.');
+    console.log('      manual changes, server errors/recovery, failed solves, scenario guards, and mobile layout.');
   } finally {
     await browser.close();
   }

@@ -23,7 +23,9 @@ from .gemini_client import DEFAULT_MODEL, GeminiError, call_gemini_with_tools
 from .gemini_tools import TOOL_DECLARATIONS, prepare_tool_change
 from .instance import load_instance
 
-DATA = Path(__file__).resolve().parents[2] / '01_data'
+ROOT = Path(__file__).resolve().parents[2]
+DATA = ROOT / '01_data'
+
 
 # An upload must answer promptly. Give CP-SAT this long per scenario to prove
 # the optimum; past it, emit() falls back to the heuristic rather than hang.
@@ -43,9 +45,11 @@ def load_environment() -> None:
     expanded as shell commands; other keys in the local file are ignored.
     """
     path = DATA.parent / '.env'
-    if not path.is_file():
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except OSError:
         return
-    for line in path.read_text(encoding='utf-8').splitlines():
+    for line in lines:
         key, separator, value = line.strip().removeprefix('export ').partition('=')
         key, value = key.strip(), value.strip()
         if separator and key in ('GEMINI_API_KEY', 'GEMINI_MODEL'):
@@ -53,6 +57,10 @@ def load_environment() -> None:
                 value = value[1:-1]
             if value:
                 os.environ.setdefault(key, value)
+
+
+# Support both python -m sincro.web and servers that import this module.
+load_environment()
 
 
 def assistant_status() -> dict:

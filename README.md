@@ -76,7 +76,7 @@ downloads. Before a solve, it can explain the inputs and product rules.
 To enable it, copy `.env.example` to `.env` in the repository root, set
 `GEMINI_API_KEY` to your Google AI Studio key, and restart the web app. The server
 loads this file without extra packages; existing environment variables take
-precedence. `GEMINI_MODEL` optionally overrides `gemini-2.5-flash`. Keep the key
+precedence. `GEMINI_MODEL` optionally overrides `gemini-3.5-flash`. Keep the key
 on the server. Without a key, scheduling and downloads still work, and the
 assistant shows its configuration status.
 
