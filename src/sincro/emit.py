@@ -36,8 +36,7 @@ def write_submission(inst: Instance, result: dict, out: Path, scenario: str) -> 
 
 def _solve_best(inst: Instance, scenario: str, optimal: bool,
                 primary_seconds: float | None,
-                schedule_constraints: dict | None = None,
-                require_proof: bool = False) -> tuple[dict, str]:
+                schedule_constraints: dict | None = None) -> tuple[dict, str]:
     """Prove the optimum when asked and able; otherwise schedule heuristically.
 
     The brief forbids ever declaring a case impossible, so an exact solve that
@@ -49,32 +48,27 @@ def _solve_best(inst: Instance, scenario: str, optimal: bool,
     try:
         from .optimal import ExactSolveFailed, solve_exact
     except ImportError as exc:
-        if schedule_constraints or require_proof:
-            raise RuntimeError('Precision optimisation requires OR-Tools') from exc
+        if schedule_constraints:
+            raise RuntimeError('Controlled replanning requires OR-Tools') from exc
         return solve(inst, scenario), 'heuristic (OR-Tools not installed)'
     try:
         result = solve_exact(inst, scenario, primary_seconds=primary_seconds,
                              schedule_constraints=schedule_constraints)
     except ExactSolveFailed:
-        if schedule_constraints or require_proof:
+        if schedule_constraints:
             raise
         return solve(inst, scenario), 'heuristic (no exact schedule found)'
-    if require_proof and (not result.get('proven') or not result.get('global_proven')):
-        raise RuntimeError('Precision optimisation did not prove the global optimum')
     return result, 'exact' if result.get('proven') else 'exact (not proven optimal)'
 
 
 def emit(data_dir: str, out_dir: str, scenario: str = 'A', *, optimal: bool = False,
          primary_seconds: float | None = None,
-         schedule_constraints: dict | None = None,
-         require_proof: bool = False) -> dict:
+         schedule_constraints: dict | None = None) -> dict:
     inst = load_instance(data_dir)
-    if require_proof and not optimal:
-        raise ValueError('A proof can only be required from the exact optimiser')
     if schedule_constraints and not optimal:
         raise ValueError('Controlled replanning requires the exact optimiser')
     result, solver = _solve_best(
-        inst, scenario, optimal, primary_seconds, schedule_constraints, require_proof)
+        inst, scenario, optimal, primary_seconds, schedule_constraints)
     with tempfile.TemporaryDirectory(prefix='sincro-') as temporary:
         staging = Path(temporary)
         write_submission(inst, result, staging, scenario)
@@ -99,10 +93,7 @@ def emit(data_dir: str, out_dir: str, scenario: str = 'A', *, optimal: bool = Fa
                 'horizon_weeks': result.get('horizon_weeks', inst.horizon_weeks),
                 'primary_seconds': result.get('primary_wall_seconds'),
                 'priority_proven': result.get('priority_proven', False),
-                'global_proven': result.get('global_proven', False),
-                'certificate_horizon_weeks': result.get('certificate_horizon_weeks'),
-                'scope': ('local model with extended-horizon improvement certificate; '
-                          'each activity charged for its own late days'),
+                'scope': 'local model and reported horizon; organiser score inferred from reported results',
             }
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -118,7 +109,7 @@ def main() -> None:
     parser.add_argument('out_dir')
     parser.add_argument('scenario', choices=['A', 'B', 'C', 'all'], nargs='?', default='A')
     parser.add_argument('--optimal', action='store_true',
-                        help='optimise activity delay penalties, then improve the priority tie-break')
+                        help='optimise contract completion, then improve the priority tie-break')
     args = parser.parse_args()
     try:
         for scenario in ('A', 'B', 'C') if args.scenario == 'all' else (args.scenario,):

@@ -1,7 +1,4 @@
-"""Historical contract-final relaxation; not a current objective certificate.
-
-The user has since confirmed activity-own-delay scoring. See
-docs/PRIORITY_RECALCULATION.md for the current calculation and proof.
+"""Independent public-instance relaxation; this is not a scheduling backend.
 
 Run from the repository root:
     PYTHONPATH=src .venv/bin/python docs/verify_public_lower_bound.py

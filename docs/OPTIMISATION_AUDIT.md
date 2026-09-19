@@ -1,10 +1,5 @@
 # Can stronger search improve A or C?
 
-**Historical audit:** this document uses the superseded contract-final delay
-objective, not the user-confirmed activity-own-delay formula. Its references
-to current schedules describe the older artifacts. See
-[PRIORITY_RECALCULATION.md](PRIORITY_RECALCULATION.md) for current results.
-
 Under the current local hard rules and inferred contract-completion score,
 **A = 1028.3 and C = 542.4 are global optima**, including schedules extending
 beyond the nominal planning horizon. This is a statement about the local model;
