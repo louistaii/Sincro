@@ -94,7 +94,7 @@ def earliest_schedule(inst: Instance, eclo: bool) -> dict[str, tuple[int, int]]:
 
 def score_from_schedule(inst: Instance, sched: dict[str, tuple[int, int]],
                         use_week_end: bool = True) -> dict:
-    """Price each activity's own delay, retaining contract completion for audit."""
+    """Price contract-final delay, retaining activity-own delay for comparison."""
     per_activity = []
     per_contract_finish: dict[str, int] = {}
     tier_days = defaultdict(int)
@@ -120,14 +120,14 @@ def score_from_schedule(inst: Instance, sched: dict[str, tuple[int, int]],
         date = inst.week_end(fin) if use_week_end else inst.week_start(fin)
         activity_total += w * max(0, (date - c.planned_completion_date).days)
         total += w * contract_overrun[a.contract_number]
-        days = max(0, (date - c.planned_completion_date).days)
+        days = contract_overrun[a.contract_number]
         if days:
             tier_days[c.contract_priority] += days
             per_activity.append((aid, c.contract_number, c.contract_priority,
                                  a.activity_priority, days, w * days))
 
     return {
-        "priority_weighted_score": round(activity_total, 1),
+        "priority_weighted_score": round(total, 1),
         "activity_finish_weighted_score": round(activity_total, 1),
         "contract_finish_weighted_score": round(total, 1),
         "priority_overrun": dict(sorted(tier_days.items())),

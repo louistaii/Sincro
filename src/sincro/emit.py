@@ -102,7 +102,7 @@ def emit(data_dir: str, out_dir: str, scenario: str = 'A', *, optimal: bool = Fa
                 'global_proven': result.get('global_proven', False),
                 'certificate_horizon_weeks': result.get('certificate_horizon_weeks'),
                 'scope': ('local model with extended-horizon improvement certificate; '
-                          'each activity charged for its own late days'),
+                          'each activity rate charged for its contract final late days'),
             }
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -118,7 +118,7 @@ def main() -> None:
     parser.add_argument('out_dir')
     parser.add_argument('scenario', choices=['A', 'B', 'C', 'all'], nargs='?', default='A')
     parser.add_argument('--optimal', action='store_true',
-                        help='optimise activity delay penalties, then improve the priority tie-break')
+                        help='optimise contract-final delay penalties, then improve the priority tie-break')
     args = parser.parse_args()
     try:
         for scenario in ('A', 'B', 'C') if args.scenario == 'all' else (args.scenario,):

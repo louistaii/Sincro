@@ -7,7 +7,7 @@ provides a browser interface for uploading the eight instance CSV or Excel files
 **Validation is local, not a certification from the judges.** The reference
 `trackaccess` package, `02_references/`, and `03_submission_sample/` are not in
 this repository. The dependency-free solver is a deterministic heuristic;
-the optional OR-Tools backend proves the user-confirmed activity-own-delay
+the optional OR-Tools backend proves the contract-final-delay
 objective, including an extended-horizon improvement check. Organiser-validator
 equivalence is unverified.
 Development tests, audits, and saved answer keys remain on the `dev` branch;
@@ -113,7 +113,7 @@ PYTHONPATH=src python3 -m sincro.emit 01_data out all
 # Or generate one scenario to a chosen directory.
 PYTHONPATH=src python3 -m sincro.emit 01_data out/B B
 
-# Optimise each activity's own delay penalty, then improve its
+# Optimise contract-final delay penalties, then improve the
 # priority-weighted completion tie-break (pip install ortools).
 PYTHONPATH=src python3 -m sincro.emit 01_data out/optimal-a A --optimal
 
@@ -131,66 +131,44 @@ only when the complete submission passes. Generation validates a staged answer
 key before copying it into the output directory; a failed solve leaves existing
 answer keys untouched.
 
-## Public results
+## Public results and corrected penalty formula
 
-**Scenario A submission-tester discrepancy:** the user reports **1028.3**, with
-49 contract-overrun days across five contracts, on the actual tester. The same
-saved A schedule scores **222.6** under the user-confirmed per-activity formula
-below and **1028.3** under the contract-final diagnostic. These are different
-measurements of the same schedule, not an improvement on the actual tester.
-An independent relaxed-model check also reaches 1028.3 under the inferred
-contract-final formula and current closure assumptions. Tester equivalence is
-still unverified; the focused A audit is retained on the `dev` branch.
+The current scoring formula is `contract-final-delay-v5`. For each contract:
 
-The exact outputs deliver **54 activities / 192 required work units** and pass
-every local hard constraint. As explicitly confirmed by the user, each activity
-is charged only for **its own late days**, measured against its contract's planned
-completion date. An on-time activity pays zero even if a sibling finishes late.
-The formula is labelled `activity-own-delay-v4`. The old contract-final delay
-metric remains available as `contract_finish_weighted_score` for audit only.
-The organiser validator is unavailable; no organiser validation attempts were used.
+`delay penalty = final contract late days * sum(activity daily rates)`
 
-| Scenario | Previous schedule, rescored locally | New local penalty | Contract overrun days | ECLO nights | Contracts late |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| A | 222.6 | 222.6 | 49 | 0 | 5 of 14 |
-| B | 60.0 | 60.0 | 0 | 12 | 0 of 14 |
-| C | 146.2 | 135.5 | 28 | 4 | 4 of 14 |
+Each activity's daily rate is its contract tier weight (100/10/1) multiplied by
+its activity multiplier (1.3/1.2/1.0). All activities in a delayed contract
+contribute their rates, including siblings completed earlier. Contract overrun
+days are counted once per contract; weighted penalty therefore cannot be inferred
+from that day count alone.
 
-These are verified results from the `dev` branch's regenerated exact schedules.
-Both columns use the same
-confirmed formula: C improves by **10.7 (7.3%)**, comprising 0.7 less activity
-delay penalty and 10 less ECLO cost. This is not the misleading comparison of
-the old 542.4 contract-based score with the new 135.5 activity-based score.
-C spreads delay across four contracts rather than three; total contract-delay
-days remain 28. All three have zero excess location-nights and no Priority-1
-contract overruns.
+The unchanged saved schedules on `dev` now reproduce the expected values:
 
-All primary scores are globally proven within the implemented local rules:
-A/C strict-improvement searches cover 59/47 weeks respectively, while B is
-bounded by its hard deadlines. These are not certifications of the inaccessible
-organiser score. Recalculation reports and machine-readable proof results are
-retained on the `dev` branch.
+| Scenario | Contract overrun days | Delay penalty | ECLO cost | Total penalty |
+| --- | ---: | ---: | ---: | ---: |
+| A | 49 | 1028.3 | 0 | 1028.3 |
+| B | 0 | 0 | 60 | 60 |
+| C | 28 | 558.6 | 20 | 578.6 |
 
-Use `--optimal` or the web app's **Precision** engine to regenerate schedules.
-No generated outputs are versioned on this deployment branch.
+There is no excess-access cost in these schedules. C's total includes four ECLO
+accesses at five points each. The former 222.6 for A and 135.5 total for C used
+a different, activity-own-delay formula and must not be shown as the intended
+penalty. `activity_finish_weighted_score` remains an explicitly separate
+diagnostic. `penalty_breakdown` exposes the actual components of the total.
 
-The exact model now removes interchangeable possession labels. Under the
-existing weekly closure rules, every pair at a common location must already
-co-share; therefore each location-week uses at most one possession. Disjoint
-sites still require an actual shared location to waive buffer conflicts. This
-reduces search size without relaxing any hard rule. Differential tests compare
-both representations, including infeasible cases.
+The optimiser, heuristic and validator now use the same contract-final objective.
+Existing schedule CSVs were not changed to perform this correction. Fresh
+optimisation can return a different valid schedule and a different penalty:
+the local-model primary minima are A 1028.3, B 60 and C 542.4. In particular,
+the saved C schedule's corrected 578.6 is a regression fixture, not a claim
+that it is optimal under the restored objective.
 
-The optimiser first minimises the activity-own-delay penalty, then derives a
-finite horizon containing every schedule that could strictly beat the incumbent.
-It searches that entire bound before declaring a global optimum. Once the primary
-value is certified, it spends up to 30 seconds improving priority-weighted activity
-completion among equal primary solutions. Reports expose local and global proof
-status, lower bound, gap, solved horizon, and certificate horizon. A candidate
-whose model objective disagrees with its serialized validation score is rejected
-before any existing output is replaced.
-Older contract-based audit results on `dev` use a different objective and are
-not current activity-own-delay certificates.
+Precision proves the primary objective and checks a finite extended horizon
+before claiming global optimality within the implemented local model. Priority
+tie-breaking cannot worsen that primary penalty. Model/export score disagreement
+is rejected. These proofs do not establish equivalence to an inaccessible
+organiser validator on all inputs.
 
 ### Which solver runs when
 
@@ -251,7 +229,7 @@ delays, retaining the best feasible incumbent. Geometry is reused across candida
   ECLO must fit both windows.
 
 The objective sums, for each activity, its contract priority weight **100/10/1**
-times its activity multiplier **1.3/1.2/1.0** times **its own late days**.
+times its activity multiplier **1.3/1.2/1.0** times **its contract's final late days**.
 Thus daily rates are 130/120/100 in tier 1, 13/12/10 in tier 2, and 1.3/1.2/1
 in tier 3; an activity nudge never crosses a tier's band. The exact model uses
 integer tenths to preserve these rates without rounding away small penalties.

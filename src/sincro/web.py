@@ -33,7 +33,7 @@ INPUT_FILES = (
 )
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_WORKBOOK_UNCOMPRESSED = 32 * 1024 * 1024
-SERVICE_VERSION = 'solve-isolation-v1'
+SERVICE_VERSION = 'solve-isolation-v2-contract-scoring'
 SOLVE_SLOT = threading.BoundedSemaphore(1)
 
 

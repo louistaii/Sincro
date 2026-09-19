@@ -7,7 +7,7 @@ whether ECLO is legal, whether planned dates are hard, whether overrun is
 scored, how much capacity excess is tolerated, and whether ECLO nights must sit
 inside one window per line. That lives in ``ScenarioPolicy``.
 
-Each solve is lexicographic: prove the activity-own-delay objective first,
+Each solve is lexicographic: prove the contract-final-delay objective first,
 lock it, then spend the remaining freedom minimising priority-weighted
 completion so that, among equally-scoring schedules, urgent work finishes
 earlier.
@@ -131,10 +131,11 @@ def _strict_improvement_horizon(inst: Instance, incumbent: int) -> int:
     if target < 0:
         return inst.horizon_weeks
     latest = []
-    for activity in inst.activities.values():
-        contract = inst.contracts[activity.contract_number]
-        weight = round(SCALE * rules.CONTRACT_WEIGHT[contract.contract_priority]
-                       * (1 + rules.ACTIVITY_NUDGE[activity.activity_priority]))
+    for contract in inst.contracts.values():
+        weight = sum(round(SCALE * rules.CONTRACT_WEIGHT[contract.contract_priority]
+                           * (1 + rules.ACTIVITY_NUDGE[a.activity_priority]))
+                     for a in inst.activities.values()
+                     if a.contract_number == contract.contract_number)
         deadline_offset = (contract.planned_completion_date - inst.horizon_start).days
         latest.append((deadline_offset + 1 + target // weight) // 7)
     return max([inst.horizon_weeks, *latest])
@@ -339,16 +340,16 @@ def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.
             fin = m.new_int_var(1, horizon, f"finish_contract_{c.contract_number}")
             contract_finish[c.contract_number] = fin
             m.add_max_equality(fin, [finish_vars[a] for a in members])
-            # Each activity pays only for its own delay. Contract completion
-            # remains useful reporting data but cannot penalise on-time siblings.
-            for a in members:
-                weight = round(SCALE * rules.CONTRACT_WEIGHT[c.contract_priority]
+            # All activity rates in the contract share its final completion.
+            # Sum integer tenths before multiplication to preserve every nudge.
+            weight = sum(round(SCALE * rules.CONTRACT_WEIGHT[c.contract_priority]
                                * (1 + rules.ACTIVITY_NUDGE[inst.activities[a].activity_priority]))
-                values = [0] + [weight * max(
-                    0, (inst.week_end(w) - c.planned_completion_date).days) for w in weeks]
-                p = m.new_int_var(0, max(values), f"penalty_activity_{a}")
-                m.add_element(finish_vars[a], values, p)
-                penalties.append(p)
+                         for a in members)
+            values = [0] + [weight * max(
+                0, (inst.week_end(w) - c.planned_completion_date).days) for w in weeks]
+            p = m.new_int_var(0, max(values), f"penalty_contract_{c.contract_number}")
+            m.add_element(fin, values, p)
+            penalties.append(p)
 
     primary = sum(penalties)
     if policy.allow_eclo:
