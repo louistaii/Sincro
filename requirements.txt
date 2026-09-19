@@ -1,6 +1,4 @@
-# The web app runs on the standard library alone; ortools below enables exact
-# CP-SAT solving instead of the heuristic fallback. Cloud Run's container size
-# and request-timeout limits comfortably fit it; adjust --timeout in the
-# deploy command if a multi-scenario ("all") run is needed, since each
-# scenario can take up to 90s.
+# Fast preview uses the standard library; Precision requires OR-Tools.
+# Primary optimisation is uncapped. Hosting request timeouts are separate;
+# configure and load-test them for the intended deployment workload.
 ortools>=9.8

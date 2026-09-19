@@ -31,11 +31,10 @@ class Geometry:
         self.deadline = {
             aid: ((inst.contracts[a.contract_number].planned_completion_date - inst.horizon_start).days + 1) // 7
             for aid, a in inst.activities.items()}
-        contract_weights = defaultdict(float)
-        for a in inst.activities.values():
-            c = inst.contracts[a.contract_number]
-            contract_weights[a.contract_number] += CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority])
-        self.weight = {aid: contract_weights[a.contract_number] for aid, a in inst.activities.items()}
+        self.weight = {
+            aid: CONTRACT_WEIGHT[inst.contracts[a.contract_number].contract_priority]
+                 * (1 + ACTIVITY_NUDGE[a.activity_priority])
+            for aid, a in inst.activities.items()}
         self.latest = dict(self.deadline)
         self.chain_weight = dict(self.weight)
         # Backward propagation makes work which unlocks a successor inherit
@@ -229,7 +228,7 @@ def construct(inst: Instance, scenario: str = 'A', *, eclo_quotas: dict[str, int
 
 
 def score(inst: Instance, finish_week: dict[str, int]) -> dict:
-    """Price every activity using its contract's final completion date."""
+    """Price each activity's own late days; retain contract scoring for audit."""
     tier_days = defaultdict(int)
     total = 0.0
     activity_total = 0.0
@@ -243,14 +242,15 @@ def score(inst: Instance, finish_week: dict[str, int]) -> dict:
         c = inst.contracts[a.contract_number]
         weight = CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority])
         activity_total += weight * max(0, (inst.week_end(fin) - c.planned_completion_date).days)
-        days = max(0, (inst.week_end(contract_finish[a.contract_number])
-                       - c.planned_completion_date).days)
+        total += weight * max(0, (inst.week_end(contract_finish[a.contract_number])
+                                 - c.planned_completion_date).days)
+        days = max(0, (inst.week_end(fin) - c.planned_completion_date).days)
         if days:
-            total += weight * days
             tier_days[c.contract_priority] += days
             rows.append((aid, a.contract_number, c.contract_priority, a.activity_priority, days, round(weight * days, 1)))
-    return {'priority_weighted_score': round(total, 1), 'priority_overrun': dict(sorted(tier_days.items())),
+    return {'priority_weighted_score': round(activity_total, 1), 'priority_overrun': dict(sorted(tier_days.items())),
             'activity_finish_weighted_score': round(activity_total, 1),
+            'contract_finish_weighted_score': round(total, 1),
             'rows': sorted(rows, key=lambda r: (-r[5], r[0]))}
 
 
@@ -284,7 +284,7 @@ def improve_dispatch(inst: Instance, best: dict, scenario: str, extra: int | Non
 
 def explore_dispatch(inst: Instance, best: dict, scenario: str, extra: int | None,
                      geometry: Geometry) -> dict:
-    """Cross flat contract-completion plateaus without losing the incumbent.
+    """Cross flat penalty plateaus without losing the incumbent.
 
     Several sibling activities can need rearranging before their contract's
     last finish improves. A seeded, bounded search admits temporary regressions
