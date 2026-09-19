@@ -8,3 +8,7 @@
 #
 #   pip install -r requirements-optional.txt
 ortools>=9.8
+
+# gemini_client.py uses only the standard library (urllib), so no extra
+# package is required to call the Gemini API. Set the GEMINI_API_KEY
+# environment variable to enable natural-language querying.

@@ -7,6 +7,7 @@ import csv
 import datetime as dt
 import io
 import json
+import os
 import posixpath
 import tempfile
 import zipfile
@@ -16,9 +17,16 @@ from xml.etree import ElementTree as ET
 
 from .change_control import apply_changes, build_schedule_constraints, parse_append_csv
 from .emit import emit
+from .gemini_client import DEFAULT_MODEL, GeminiError, call_gemini_with_tools
+from .gemini_tools import TOOL_DECLARATIONS, dispatch_tool_call
 from .instance import load_instance
 
 DATA = Path(__file__).resolve().parents[2] / '01_data'
+
+# Model is fixed to Gemini 2.5 Flash; change DEFAULT_MODEL in gemini_client.py
+# (or override via the GEMINI_MODEL environment variable below) to use a
+# different Gemini model.
+ASK_MODEL = os.environ.get('GEMINI_MODEL', DEFAULT_MODEL)
 
 # An upload must answer promptly. Give CP-SAT this long per scenario to prove
 # the optimum; past it, emit() falls back to the heuristic rather than hang.
@@ -176,6 +184,47 @@ def _calendar_exports(inst, scenario: str, access: list[dict]) -> tuple[str, str
     return '\r\n'.join(lines) + '\r\n', summary.getvalue()
 
 
+def run_ask_request(payload: dict) -> dict:
+    prompt = payload.get('prompt')
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError('prompt must be a non-empty string')
+    scenario = payload.get('scenario', 'all')
+    if scenario not in ('A', 'B', 'C', 'all'):
+        raise ValueError('Choose scenario A, B, C or all')
+    files = payload.get('files')
+    if files is not None and (not isinstance(files, dict) or set(files) != set(INPUT_FILES)
+                              or any(not isinstance(value, (str, dict)) for value in files.values())):
+        raise ValueError('Upload exactly the eight named instance CSV or XLSX files')
+    with tempfile.TemporaryDirectory(prefix='sincro-ask-') as tmp:
+        data = Path(tmp) / 'instance'
+        data.mkdir()
+        for name in INPUT_FILES:
+            content = _input_text(files[name]) if files is not None else (DATA / name).read_text()
+            (data / name).write_text(content, encoding='utf-8')
+        inst = load_instance(data)
+        system_instruction = (
+            'You are the scheduling assistant embedded in Sincro, a rail access planning tool. '
+            f'The loaded instance has {len(inst.activities)} activities across {len(inst.contracts)} contracts, '
+            f'over a {inst.horizon_weeks}-week horizon starting {inst.horizon_start.isoformat()}. '
+            f'The currently selected scenario is {scenario}. '
+            'Answer questions about the schedule concisely. If the user asks to add, edit, or postpone '
+            'planned work, call the matching tool instead of just describing it.'
+        )
+        try:
+            outcome = call_gemini_with_tools(
+                prompt, TOOL_DECLARATIONS, model=ASK_MODEL, system_instruction=system_instruction)
+        except GeminiError as exc:
+            raise ValueError(str(exc)) from exc
+        if 'function_call' in outcome:
+            call = outcome['function_call']
+            try:
+                result = dispatch_tool_call(call['name'], call['args'], data_dir=data, inst=inst, baseline=None)
+            except (ValueError, KeyError) as exc:
+                raise ValueError(f"Could not apply '{call['name']}': {exc}") from exc
+            return {'answer': f"Applied {call['name']}: {result}", 'applied': True}
+        return {'answer': outcome.get('text') or 'The assistant did not return an answer.', 'applied': False}
+
+
 def run_request(payload: dict) -> dict:
     scenario = payload.get('scenario', 'all')
     if scenario not in ('A', 'B', 'C', 'all'):
@@ -306,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path != '/solve':
+        if self.path not in ('/solve', '/ask'):
             self.send_error(404)
             return
         try:
@@ -316,7 +365,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError('Expected an object containing scenario and files')
-            response, status = run_request(payload), 200
+            handler = run_ask_request if self.path == '/ask' else run_request
+            response, status = handler(payload), 200
         except (ValueError, KeyError, OSError, csv.Error) as exc:
             response, status = {'error': str(exc)}, 400
         body = json.dumps(response).encode('utf-8')
