@@ -9,8 +9,6 @@ provides a browser interface for uploading the eight instance CSV or Excel files
 this repository. The dependency-free solver is a deterministic heuristic;
 the optional OR-Tools backend proves the inferred contract-completion objective
 within the modelled horizon. Organiser-validator equivalence is unverified.
-See [REVIEW.md](REVIEW.md) for the branch review and remaining delivery gaps.
-The full brief is kept verbatim in [docs/PROBLEM_STATEMENT.txt](docs/PROBLEM_STATEMENT.txt).
 
 ## Run the web app
 
@@ -61,9 +59,25 @@ changed accesses.
 
 Uploads are processed in temporary directories and removed after the response.
 A failure in B is shown explicitly while successful A/C results remain available.
-The server binds to localhost by default. This is a local application, not yet a
-hosted submission URL. Public hosting still needs a deployment environment and
-an appropriate production server/proxy.
+The server binds to localhost by default for local use.
+
+### Deploying to Google Cloud Run
+
+The `Dockerfile` at the repo root packages `src/`, `01_data/` and
+`requirements.txt` into a container that runs the same `sincro.web` server
+unmodified, listening on `$PORT` (Cloud Run sets this; the container defaults
+to 8080 if unset). Deploy with:
+
+```bash
+gcloud run deploy sincro --source . --region <region> --allow-unauthenticated
+```
+
+Cloud Run's default request timeout is 5 minutes (configurable up to 60 with
+`--timeout`), well past the 90 s per scenario (`EXACT_SECONDS_PER_SCENARIO`)
+that exact/optimal solving can take even across all three scenarios --
+unlike a serverless-function host, no code changes or timeout workarounds
+are needed. `requirements.txt` is stdlib-only by default; uncomment
+`ortools` there to enable exact solving in the deployed container.
 
 ### Planning assistant
 
@@ -143,10 +157,10 @@ PYTHONPATH=src python3 -m sincro.emit 01_data out/optimal-a A --optimal
 
 # Infer the scenario from RESULTS.csv, or supply A/B/C as the final argument.
 PYTHONPATH=src python3 -m sincro.validate 01_data out/B
-
-# Regression checks, including adversarial submissions and changed uploads.
-PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
+
+Generated answer keys are not checked into this repository; run the commands
+above to produce them locally.
 
 The validator returns JSON and exits nonzero for an invalid submission. All
 three files are checked, including their schemas, workload, exact occupancy,
@@ -157,10 +171,12 @@ answer keys untouched.
 
 ## Public results
 
-All checked-in outputs deliver **54 activities / 192 required work units** and
-pass every local hard constraint. Scores below use contract completion dates:
-every activity's priority multiplier is charged for its **contract's final
-lateness**, including activities that finished earlier.
+Regenerating the answer keys (see above) delivers all **54 activities / 192
+required work units** and passes every local hard constraint. Scores below use
+contract completion dates: every activity's priority multiplier is charged for
+its **contract's final lateness**, including activities that finished earlier.
+These are results under the documented local model, not reference-validator
+scores. Lower penalties are better.
 
 This interpretation exactly reproduces the organiser's reported **1028.3** for
 the previous A schedule. The former activity-finish objective gave 222.6 for A
@@ -179,12 +195,18 @@ small discrepancy remains unverified. No organiser validation attempts were used
 | B | 60.0 | 60.0 | 0 | 12 | 0 of 14 |
 | C | 578.6 | 542.4 | 28 | 6 | 3 of 14 |
 
-These are the `out/optimal-*` schedules. All three primary objectives are proven
+These are the `--optimal` schedules. All three primary objectives are proven
 for the local model's 30-week horizon; independent 60-week A/C solves reached the
 same values. C buys two more ECLO nights to concentrate delay in fewer contracts,
 reducing its inferred penalty by 36.2 (6.3%). A/B cannot improve within this
 model and horizon. A proof here does not certify the inaccessible organiser score.
 All three have zero excess location-nights and no Priority-1 contract overruns.
+
+The optional exact backend produces these `--optimal` schedules. It first
+proves the inferred primary objective, fixes that value, and then spends up
+to 30 seconds improving priority-weighted completion time among equal primary
+solutions. Install it with `pip install ortools`; without it every entry point
+falls back to the heuristic and names that in its `solver` field.
 
 The dependency-free fallback also improves when scored on this same basis:
 
@@ -194,8 +216,9 @@ The dependency-free fallback also improves when scored on this same basis:
 | B | 100.0 | 100.0 | 60.0 |
 | C | 1285.4 | 854.6 | 542.4 |
 
-The heuristic outputs remain in `out/A`, `out/B`, and `out/C`. Use the
-`out/optimal-*` outputs or the web app's **Optimise** engine for the best scores.
+No Priority-1 contract is late in any scenario, under either backend. Use the
+web app's **Optimise** engine, or `--optimal` when generating answer keys, for
+the best scores.
 
 The exact model now removes interchangeable possession labels. Under the
 existing weekly closure rules, every pair at a common location must already
@@ -209,8 +232,6 @@ value, and spends up to 30 seconds improving priority-weighted activity completi
 among equal primary solutions. Reports expose the local proof status, lower
 bound, gap, and horizon. A candidate whose model objective disagrees with its
 serialized validation score is rejected before any existing output is replaced.
-The [recorded comparison](out/algorithm-results.json) includes baseline scores,
-measured solve times, and validation for both backends.
 
 ### Which solver runs when
 
@@ -220,7 +241,7 @@ measured solve times, and validation for both backends.
 | `sincro.emit --optimal` | exact, no primary time cap, falls back to the heuristic |
 | `sincro.web` (judges' upload) | exact, 90 s per primary attempt, falls back |
 
-Install the exact backend with `pip install -r requirements-optional.txt`.
+Install the exact backend by adding `ortools>=9.8` to `requirements.txt`.
 Fallbacks are named in the report's `solver` field. Controlled replanning requires
 the exact backend to preserve protected decisions.
 
@@ -302,10 +323,7 @@ flagged `is_shared`). Cross-line reach follows the instance's own
 lines or two bounds are handled: a power cut at a shared interchange closes the
 hub locations on *every* other line meeting there.
 
-`tests/test_portability.py` enforces this by relabelling the public CSVs --
-hubs, bounds, lines, natures, buffer depths, and all of them at once -- and
-asserting the geometry is isomorphic, plus a synthesised three-line network.
-These matter because a hardcoded identifier does not reliably crash: renaming
+This matters because a hardcoded identifier does not reliably crash: renaming
 the hubs previously dropped the Live cross-line closure *silently*, which reads
 as a perfectly feasible schedule.
 
@@ -360,22 +378,13 @@ src/sincro/assistant.py    Grounded assistant context and signed plan snapshots
 src/sincro/gemini_client.py  Bounded Gemini transport and conversation history
 src/sincro/gemini_tools.py   Validated proposals for the shared change-control flow
 src/sincro/analyse.py      Capacity and optimistic critical-path analysis
-src/sincro/report.py       Human-readable instance diagnostics
-src/sincro/feasibility_probe.py  Earliest-start pressure probe
 src/sincro/extract.py      Column-faithful CSV reader for standalone analysis
 src/sincro/priority.py     Legacy tunable and scenario-aware urgency rankings
-out/{A,B,C}/              Precomputed heuristic public answer keys
-out/optimal-{a,b,c}/      Proven-primary public answer keys
-tests/                    Hard-rule, congestion and upload regressions
-tests/test_portability.py  Relabelled-instance and multi-line regressions
-docs/PROBLEM_STATEMENT.txt The brief, verbatim
-REVIEW.md                 Review findings and unresolved deliverables
+Dockerfile                Container image for Google Cloud Run
+requirements.txt          Runtime dependencies for the deployed container (stdlib only)
 ```
 
 ```bash
-PYTHONPATH=src python3 -m sincro.report 01_data
-PYTHONPATH=src python3 -m sincro.feasibility_probe 01_data
-
 # Rank activities by tunable urgency weights (standalone; edit WEIGHTS to tune).
 PYTHONPATH=src python3 -m sincro.priority 01_data
 ```
