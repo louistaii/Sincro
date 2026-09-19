@@ -26,6 +26,32 @@ class Geometry:
         self.spans = {aid: set(inst.span_locations(a)) for aid, a in inst.activities.items()}
         self.feet = {aid: inst.closure_footprint(a) for aid, a in inst.activities.items()}
         self.kinds = {aid: inst.contracts[a.contract_number].access_type for aid, a in inst.activities.items()}
+        self.release = {aid: max(1, inst.week_of(a.planned_start_date))
+                        for aid, a in inst.activities.items()}
+        self.deadline = {
+            aid: ((inst.contracts[a.contract_number].planned_completion_date - inst.horizon_start).days + 1) // 7
+            for aid, a in inst.activities.items()}
+        contract_weights = defaultdict(float)
+        for a in inst.activities.values():
+            c = inst.contracts[a.contract_number]
+            contract_weights[a.contract_number] += CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority])
+        self.weight = {aid: contract_weights[a.contract_number] for aid, a in inst.activities.items()}
+        self.latest = dict(self.deadline)
+        self.chain_weight = dict(self.weight)
+        # Backward propagation makes work which unlocks a successor inherit
+        # that successor's latest start and its completion penalty.
+        pending = set(inst.activities)
+        while pending:
+            leaves = pending - {inst.activities[aid].predecessor_activity_id for aid in pending}
+            if not leaves:
+                raise ValueError('activity precedence cycle')
+            for aid in sorted(leaves):
+                a = inst.activities[aid]
+                if a.predecessor_activity_id:
+                    pred = a.predecessor_activity_id
+                    self.latest[pred] = min(self.latest[pred], self.latest[aid] - a.total_accesses)
+                    self.chain_weight[pred] = max(self.chain_weight[pred], self.chain_weight[aid])
+            pending.difference_update(leaves)
 
 
 class Week:
@@ -116,15 +142,17 @@ class Week:
 
 def construct(inst: Instance, scenario: str = 'A', *, eclo_quotas: dict[str, int] | None = None,
               eclo_windows: dict[str, int] | None = None, extra_capacity: int | None = 0,
-              ordering: str = 'slack', dispatch_bias: dict[str, float] | None = None) -> tuple[dict, list]:
+              ordering: str = 'slack', dispatch_bias: dict[str, float] | None = None,
+              not_before: dict[str, int] | None = None, _geometry: Geometry | None = None) -> tuple[dict, list]:
     if scenario not in ('A', 'B', 'C'):
         raise ValueError('scenario must be A, B or C')
     if scenario == 'A' and (extra_capacity != 0 or any((eclo_quotas or {}).values())):
         raise ValueError('Scenario A forbids ECLO and extra capacity')
     if scenario == 'C' and extra_capacity not in (0, 1):
         raise ValueError('Scenario C permits at most one extra possession per location-week')
-    inst.check()
-    geo = Geometry(inst)
+    if _geometry is None:
+        inst.check()
+    geo = _geometry or Geometry(inst)
     for aid, span in geo.spans.items():
         if extra_capacity is not None and any(inst.supply[loc] + extra_capacity < 1 for loc in span):
             raise SchedulingError(f'{aid}: required location has zero recurring supply')
@@ -138,14 +166,15 @@ def construct(inst: Instance, scenario: str = 'A', *, eclo_quotas: dict[str, int
     eclo_used = defaultdict(int)
     # Static weekly supply repeats after the nominal horizon. Serial execution
     # is a finite fallback bound; never silently truncate at horizon_weeks.
-    last_release = max(max(1, inst.week_of(a.planned_start_date)) for a in inst.activities.values())
+    release = {aid: max(geo.release[aid], (not_before or {}).get(aid, 1)) for aid in inst.activities}
+    last_release = max(release.values())
     limit = last_release + sum(a.total_accesses for a in inst.activities.values())
     excess = 0
 
     for week in range(1, limit + 1):
         wk = Week(inst, week, geo, extra_capacity)
         ready = [aid for aid, a in inst.activities.items() if remaining[aid] > 0
-                 and max(1, inst.week_of(a.planned_start_date)) <= week
+                 and release[aid] <= week
                  and (not a.predecessor_activity_id or
                       finish_week.get(a.predecessor_activity_id, limit + 1) < week)]
 
@@ -153,11 +182,13 @@ def construct(inst: Instance, scenario: str = 'A', *, eclo_quotas: dict[str, int
             a = inst.activities[aid]
             c = inst.contracts[a.contract_number]
             weight = CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority])
-            deadline = (c.planned_completion_date - inst.horizon_start).days // 7
             # A week completes on its last day, even for a midweek deadline.
-            deadline += ((c.planned_completion_date - inst.horizon_start).days % 7 == 6)
+            deadline = geo.deadline[aid]
             needed = math.ceil(remaining[aid])
             slack = deadline - week - needed + 1
+            if ordering == 'chain':
+                return (geo.latest[aid] - week - needed + 1 + (dispatch_bias or {}).get(aid, 0),
+                        -geo.chain_weight[aid], aid)
             if ordering == 'priority':
                 return (-weight, slack, aid)
             if ordering == 'cost':
@@ -194,23 +225,32 @@ def construct(inst: Instance, scenario: str = 'A', *, eclo_quotas: dict[str, int
     return {'placements': placements, 'finish_week': finish_week, 'group_of': group_of,
             'unfinished': {}, 'excess': excess, 'eclo_quotas': dict(quotas),
             'eclo_windows': dict(windows), 'ordering': ordering,
-            'dispatch_bias': dict(dispatch_bias or {})}, []
+            'dispatch_bias': dict(dispatch_bias or {}), 'not_before': dict(not_before or {})}, []
 
 
 def score(inst: Instance, finish_week: dict[str, int]) -> dict:
+    """Price every activity using its contract's final completion date."""
     tier_days = defaultdict(int)
     total = 0.0
+    activity_total = 0.0
     rows = []
+    contract_finish = {}
+    for aid, fin in finish_week.items():
+        cn = inst.activities[aid].contract_number
+        contract_finish[cn] = max(contract_finish.get(cn, 0), fin)
     for aid, fin in finish_week.items():
         a = inst.activities[aid]
         c = inst.contracts[a.contract_number]
-        days = max(0, (inst.week_end(fin) - c.planned_completion_date).days)
+        weight = CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority])
+        activity_total += weight * max(0, (inst.week_end(fin) - c.planned_completion_date).days)
+        days = max(0, (inst.week_end(contract_finish[a.contract_number])
+                       - c.planned_completion_date).days)
         if days:
-            weight = CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority])
             total += weight * days
             tier_days[c.contract_priority] += days
             rows.append((aid, a.contract_number, c.contract_priority, a.activity_priority, days, round(weight * days, 1)))
     return {'priority_weighted_score': round(total, 1), 'priority_overrun': dict(sorted(tier_days.items())),
+            'activity_finish_weighted_score': round(activity_total, 1),
             'rows': sorted(rows, key=lambda r: (-r[5], r[0]))}
 
 
@@ -222,7 +262,8 @@ def objective(inst: Instance, result: dict, scenario: str) -> float:
                  (7 * result['excess'] + 5 * sum(p[3] for p in result['placements']) if scenario != 'A' else 0), 1)
 
 
-def improve_dispatch(inst: Instance, best: dict, scenario: str, extra: int | None) -> dict:
+def improve_dispatch(inst: Instance, best: dict, scenario: str, extra: int | None,
+                     geometry: Geometry | None = None) -> dict:
     """Two bounded local-search passes to repair costly greedy packing choices."""
     for _ in range(2):
         changed = False
@@ -232,11 +273,54 @@ def improve_dispatch(inst: Instance, best: dict, scenario: str, extra: int | Non
                 biases[aid] = biases.get(aid, 0) + shift
                 trial, _ = construct(inst, scenario, eclo_quotas=best['eclo_quotas'],
                                      eclo_windows=best['eclo_windows'], extra_capacity=extra,
-                                     ordering='slack', dispatch_bias=biases)
+                                     ordering='slack', dispatch_bias=biases,
+                                     not_before=best['not_before'], _geometry=geometry)
                 if objective(inst, trial, scenario) < objective(inst, best, scenario):
                     best, changed = trial, True
         if not changed:
             break
+    return best
+
+
+def explore_dispatch(inst: Instance, best: dict, scenario: str, extra: int | None,
+                     geometry: Geometry) -> dict:
+    """Cross flat contract-completion plateaus without losing the incumbent.
+
+    Several sibling activities can need rearranging before their contract's
+    last finish improves. A seeded, bounded search admits temporary regressions
+    in its working schedule while retaining only a strictly better answer.
+    Release delays also let a broad closure wait for compatible work to finish.
+    Every candidate still goes through the same hard-rule constructor.
+    """
+    if objective(inst, best, scenario) == 0:
+        return best
+    rng = random.Random(9171)
+    aids = sorted(inst.activities)
+    current = best
+    best_value = current_value = objective(inst, best, scenario)
+    for attempt in range(min(1000, 20 * len(aids))):
+        biases = dict(current['dispatch_bias'])
+        releases = dict(current['not_before'])
+        count = 1 if attempt % 5 else rng.randint(2, 5)
+        if attempt % 4:
+            for aid in rng.sample(aids, min(count, len(aids))):
+                biases[aid] = biases.get(aid, 0) + rng.choice((-12, -4, -2, -1, 1, 2, 4, 12))
+        else:
+            aid = rng.choice(aids)
+            releases[aid] = max(geometry.release[aid],
+                                releases.get(aid, geometry.release[aid]) + rng.choice((-2, -1, 1, 2)))
+        trial, _ = construct(inst, scenario, eclo_quotas=best['eclo_quotas'],
+                             eclo_windows=best['eclo_windows'], extra_capacity=extra,
+                             ordering='slack', dispatch_bias=biases,
+                             not_before=releases, _geometry=geometry)
+        value = objective(inst, trial, scenario)
+        temperature = 60 * (1 - (attempt % 500) / 500)
+        if value < current_value or rng.random() < math.exp(min(0, (current_value - value) / temperature)):
+            current, current_value = trial, value
+        if value < best_value:
+            best, best_value = trial, value
+        if attempt % 500 == 499:
+            current, current_value = best, best_value
     return best
 
 
@@ -249,8 +333,12 @@ def solve(inst: Instance, scenario: str = 'A') -> dict:
     """
     if scenario not in ('A', 'B', 'C'):
         raise ValueError('scenario must be A, B or C')
+    inst.check()
+    geometry = Geometry(inst)
     candidates = []
     policies = [('slack', {}), ('scenario', {}), ('priority', {}), ('cost', {})]
+    if scenario != 'B':
+        policies.append(('chain', {}))
     # A fixed seed makes the bounded multi-start search reproducible. Biases
     # vary priority pressure and packing order; feasibility never changes.
     rng = random.Random(2027)
@@ -261,22 +349,24 @@ def solve(inst: Instance, scenario: str = 'A') -> dict:
                   math.log10(CONTRACT_WEIGHT[inst.contracts[a.contract_number].contract_priority])
                   for aid, a in sorted(inst.activities.items())}
         policies.append(('slack', biases))
+        if scenario != 'B':
+            policies.append(('chain', biases))
     capacities = [0] if scenario == 'A' else ([0, None] if scenario == 'B' else [0, 1])
     for extra in capacities:
         quotas = ({aid: a.total_accesses for aid, a in inst.activities.items()} if scenario == 'B' else {})
         for order, biases in policies:
             try:
                 result, _ = construct(inst, scenario, eclo_quotas=quotas, extra_capacity=extra,
-                                      ordering=order, dispatch_bias=biases)
+                                      ordering=order, dispatch_bias=biases, _geometry=geometry)
             except SchedulingError:
                 continue
             candidates.append((result, extra))
     if not candidates:
         raise SchedulingError('No complete schedule found with the permitted recurring supply')
     best, extra = min(candidates, key=lambda item: (objective(inst, item[0], scenario), len(item[0]['placements'])))
-    best = improve_dispatch(inst, best, scenario, extra)
+    best = improve_dispatch(inst, best, scenario, extra, geometry)
     if scenario == 'A':
-        return best
+        return explore_dispatch(inst, best, scenario, extra, geometry)
     if scenario == 'B':
         if math.isinf(objective(inst, best, scenario)):
             raise SchedulingError('No deadline-feasible Scenario B schedule found by this heuristic; '
@@ -292,7 +382,8 @@ def solve(inst: Instance, scenario: str = 'A') -> dict:
                     trial_quotas = {**quotas, aid: count}
                     trial, _ = construct(inst, scenario, eclo_quotas=trial_quotas,
                                          extra_capacity=extra, ordering=best['ordering'],
-                                         dispatch_bias=best['dispatch_bias'])
+                                         dispatch_bias=best['dispatch_bias'],
+                                         not_before=best['not_before'], _geometry=geometry)
                     if objective(inst, trial, scenario) < objective(inst, best, scenario):
                         quotas, best, improved = trial_quotas, trial, True
                         break
@@ -317,12 +408,13 @@ def solve(inst: Instance, scenario: str = 'A') -> dict:
                 windows.update({line: start for line in lines})
                 trial, _ = construct(inst, scenario, eclo_quotas={**best['eclo_quotas'], aid: 2},
                                      eclo_windows=windows, extra_capacity=extra, ordering=best['ordering'],
-                                     dispatch_bias=best['dispatch_bias'])
+                                     dispatch_bias=best['dispatch_bias'],
+                                     not_before=best['not_before'], _geometry=geometry)
                 if objective(inst, trial, scenario) < objective(inst, best, scenario):
                     if improvement is None or objective(inst, trial, scenario) < objective(inst, improvement, scenario):
                         improvement = trial
         if improvement is None:
-            return best
+            return explore_dispatch(inst, best, scenario, extra, geometry)
         best = improvement
 
 
