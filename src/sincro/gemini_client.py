@@ -52,8 +52,8 @@ def call_gemini(prompt: str, *, api_key: str | None = None, model: str = DEFAULT
         Socket timeout in seconds for the HTTP request.
     """
     payload = _generate_content(
-        prompt, api_key=api_key, model=model, system_instruction=system_instruction,
-        temperature=temperature, timeout=timeout,
+        [{'role': 'user', 'parts': [{'text': prompt}]}], api_key=api_key, model=model,
+        system_instruction=system_instruction, temperature=temperature, timeout=timeout,
     )
     try:
         parts = payload['candidates'][0]['content']['parts']
@@ -62,10 +62,17 @@ def call_gemini(prompt: str, *, api_key: str | None = None, model: str = DEFAULT
         raise GeminiError(f'Unexpected Gemini API response shape: {payload}') from exc
 
 
-def call_gemini_with_tools(prompt: str, tools: list[dict], *, api_key: str | None = None,
+def call_gemini_with_tools(contents: list[dict], tools: list[dict], *, api_key: str | None = None,
                             model: str = DEFAULT_MODEL, system_instruction: str | None = None,
                             temperature: float = 0.2, timeout: float = REQUEST_TIMEOUT_SECONDS) -> dict:
-    """Send ``prompt`` to Gemini with function-calling ``tools`` declared.
+    """Send a conversation to Gemini with function-calling ``tools`` declared.
+
+    ``contents`` is the running conversation as a list of
+    ``{'role': 'user' | 'model', 'parts': [...]}`` turns (the Gemini API only
+    recognises those two roles; a tool result is sent back as a ``'user'``
+    turn containing a ``functionResponse`` part). Callers own this list and
+    are expected to append the model's turn and any tool result before
+    calling again, to run a multi-step tool-calling loop.
 
     ``tools`` should be a list of function declarations in the shape produced
     by :data:`sincro.gemini_tools.TOOL_DECLARATIONS` (``name``,
@@ -73,12 +80,16 @@ def call_gemini_with_tools(prompt: str, tools: list[dict], *, api_key: str | Non
 
     Returns a dict with either:
       - ``{'text': str}`` when Gemini answered directly, or
-      - ``{'function_call': {'name': str, 'args': dict}}`` when Gemini wants
-        a tool invoked. Route the latter through
-        :func:`sincro.gemini_tools.dispatch_tool_call`.
+      - ``{'function_call': {'name': str, 'args': dict}, 'parts': [...]}``
+        when Gemini wants a tool invoked. Route the call through
+        :func:`sincro.gemini_tools.dispatch_tool_call`, and append
+        ``{'role': 'model', 'parts': outcome['parts']}`` to ``contents``
+        verbatim (not a reconstructed functionCall part) -- newer models
+        attach a ``thoughtSignature`` to that part that must round-trip
+        unchanged or the next call is rejected.
     """
     payload = _generate_content(
-        prompt, api_key=api_key, model=model, system_instruction=system_instruction,
+        contents, api_key=api_key, model=model, system_instruction=system_instruction,
         temperature=temperature, timeout=timeout, tools=tools,
     )
     try:
@@ -89,24 +100,25 @@ def call_gemini_with_tools(prompt: str, tools: list[dict], *, api_key: str | Non
     for part in parts:
         call = part.get('functionCall')
         if call:
-            return {'function_call': {'name': call['name'], 'args': call.get('args', {})}}
+            return {'function_call': {'name': call['name'], 'args': call.get('args', {})}, 'parts': parts}
     return {'text': ''.join(part.get('text', '') for part in parts).strip()}
 
 
-def _generate_content(prompt: str, *, api_key: str | None, model: str, system_instruction: str | None,
-                       temperature: float, timeout: float, tools: list[dict] | None = None) -> dict:
+def _generate_content(contents: list[dict], *, api_key: str | None, model: str,
+                       system_instruction: str | None, temperature: float, timeout: float,
+                       tools: list[dict] | None = None) -> dict:
     key = api_key or os.environ.get('GEMINI_API_KEY')
     if not key:
         raise GeminiError(
             'Missing Gemini API key. Set the GEMINI_API_KEY environment variable '
             'or pass api_key explicitly.'
         )
-    if not prompt or not prompt.strip():
-        raise GeminiError('prompt must be a non-empty string')
+    if not contents:
+        raise GeminiError('contents must be non-empty')
 
     url = f'{API_BASE}/{model}:generateContent?key={key}'
     body: dict = {
-        'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
+        'contents': contents,
         'generationConfig': {'temperature': temperature},
     }
     if system_instruction:

@@ -18,7 +18,7 @@ from xml.etree import ElementTree as ET
 from .change_control import apply_changes, build_schedule_constraints, parse_append_csv
 from .emit import emit
 from .gemini_client import DEFAULT_MODEL, GeminiError, call_gemini_with_tools
-from .gemini_tools import TOOL_DECLARATIONS, dispatch_tool_call
+from .gemini_tools import READ_TOOL_NAMES, TOOL_DECLARATIONS, dispatch_tool_call
 from .instance import load_instance
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,6 +47,10 @@ _load_dotenv(ROOT / '.env')
 # (or override via the GEMINI_MODEL environment variable below) to use a
 # different Gemini model.
 ASK_MODEL = os.environ.get('GEMINI_MODEL', DEFAULT_MODEL)
+
+# Read-only tool calls (schedule lookups) loop back to Gemini automatically;
+# cap the round trips so a confused model can't loop forever.
+MAX_TOOL_ITERATIONS = 6
 
 # An upload must answer promptly. Give CP-SAT this long per scenario to prove
 # the optimum; past it, emit() falls back to the heuristic rather than hang.
@@ -204,6 +208,29 @@ def _calendar_exports(inst, scenario: str, access: list[dict]) -> tuple[str, str
     return '\r\n'.join(lines) + '\r\n', summary.getvalue()
 
 
+def _baseline_rows(schedule: dict | None, scenario_key: str) -> list[dict]:
+    """The current-schedule rows :func:`~sincro.change_control.build_schedule_constraints`
+    needs, taken from the already-solved nights the browser sent along."""
+    solved = (schedule or {}).get(scenario_key)
+    if not solved:
+        raise ValueError(f"Scenario {scenario_key} hasn't been solved yet; run it before postponing an access.")
+    return [{'activity_id': activity['id'], 'week': night['week'], 'eclo': night['eclo'],
+             'access_seq': night['access_seq'], 'access_night': night['access_night']}
+            for activity in solved.get('activities', []) for night in activity.get('nights', [])]
+
+
+def _change_from_tool_call(name: str, args: dict) -> dict:
+    """Build the same ``change`` dict shape the manual change dialog sends to /solve."""
+    if name == 'add_activity':
+        return {'kind': 'append', 'activities': [dict(args)]}
+    if name == 'edit_activity':
+        return {'kind': 'edit_activity', **args}
+    if name == 'edit_contract':
+        return {'kind': 'edit_contract', **args}
+    return {'kind': 'postpone', 'activity_id': args['activity_id'], 'week': args['week'],
+            'access_seq': args['access_seq']}
+
+
 def run_ask_request(payload: dict) -> dict:
     prompt = payload.get('prompt')
     if not isinstance(prompt, str) or not prompt.strip():
@@ -215,6 +242,9 @@ def run_ask_request(payload: dict) -> dict:
     if files is not None and (not isinstance(files, dict) or set(files) != set(INPUT_FILES)
                               or any(not isinstance(value, (str, dict)) for value in files.values())):
         raise ValueError('Upload exactly the eight named instance CSV or XLSX files')
+    schedule = payload.get('schedule')
+    if schedule is not None and not isinstance(schedule, dict):
+        raise ValueError('schedule must be an object of already-solved scenario results')
     with tempfile.TemporaryDirectory(prefix='sincro-ask-') as tmp:
         data = Path(tmp) / 'instance'
         data.mkdir()
@@ -222,27 +252,67 @@ def run_ask_request(payload: dict) -> dict:
             content = _input_text(files[name]) if files is not None else (DATA / name).read_text()
             (data / name).write_text(content, encoding='utf-8')
         inst = load_instance(data)
+        solved = sorted(k for k in (schedule or {}) if k in ('A', 'B', 'C'))
+        schedule_note = (
+            f'Solved schedules are already available for scenario(s) {", ".join(solved)}: call '
+            'get_contract, get_activity, get_week_schedule or list_activities to read specifics '
+            'from them instead of guessing or asking the user to repeat data. '
+            if solved else
+            'No scenario has been solved yet, so the schedule lookup tools have nothing to return; '
+            'if the user asks about specific results, tell them to run the scheduler first. '
+        )
+        scenario_hint = (
+            f"When calling add_activity, edit_activity, edit_contract or postpone_access, set scenario to "
+            f"'{scenario}' unless the user names a different one. "
+            if scenario != 'all' else
+            'When calling add_activity, edit_activity, edit_contract or postpone_access, you must set '
+            "scenario to 'A', 'B', or 'C' -- ask the user which one if they haven't said. "
+        )
         system_instruction = (
             'You are the scheduling assistant embedded in Sincro, a rail access planning tool. '
             f'The loaded instance has {len(inst.activities)} activities across {len(inst.contracts)} contracts, '
             f'over a {inst.horizon_weeks}-week horizon starting {inst.horizon_start.isoformat()}. '
-            f'The currently selected scenario is {scenario}. '
+            f'The currently selected scenario is {scenario}. ' + schedule_note + scenario_hint +
             'Answer questions about the schedule concisely. If the user asks to add, edit, or postpone '
-            'planned work, call the matching tool instead of just describing it.'
+            'planned work, call the matching tool instead of just describing it -- calling it queues a '
+            'real, re-solved change; it does not just preview one.'
         )
-        try:
-            outcome = call_gemini_with_tools(
-                prompt, TOOL_DECLARATIONS, model=ASK_MODEL, system_instruction=system_instruction)
-        except GeminiError as exc:
-            raise ValueError(str(exc)) from exc
-        if 'function_call' in outcome:
-            call = outcome['function_call']
+        contents: list[dict] = [{'role': 'user', 'parts': [{'text': prompt}]}]
+        for _ in range(MAX_TOOL_ITERATIONS):
             try:
-                result = dispatch_tool_call(call['name'], call['args'], data_dir=data, inst=inst, baseline=None)
+                outcome = call_gemini_with_tools(
+                    contents, TOOL_DECLARATIONS, model=ASK_MODEL, system_instruction=system_instruction)
+            except GeminiError as exc:
+                raise ValueError(str(exc)) from exc
+            if 'function_call' not in outcome:
+                return {'answer': outcome.get('text') or 'The assistant did not return an answer.',
+                        'applied': False}
+            call = outcome['function_call']
+            contents.append({'role': 'model', 'parts': outcome['parts']})
+            if call['name'] not in READ_TOOL_NAMES:
+                args = dict(call['args'])
+                target_scenario = args.pop('scenario', None)
+                if target_scenario not in ('A', 'B', 'C'):
+                    raise ValueError('Choose a specific scenario (A, B, or C) for this change.')
+                try:
+                    if call['name'] == 'postpone_access':
+                        dispatch_tool_call(call['name'], args, inst=inst,
+                                            baseline=_baseline_rows(schedule, target_scenario))
+                    else:
+                        dispatch_tool_call(call['name'], args, data_dir=data)
+                except (ValueError, KeyError) as exc:
+                    raise ValueError(f"Could not apply '{call['name']}': {exc}") from exc
+                return {'answer': f'Applying the requested change to scenario {target_scenario}…',
+                        'applied': True, 'scenario': target_scenario,
+                        'change': _change_from_tool_call(call['name'], args),
+                        'as_of_date': args.get('as_of_date')}
+            try:
+                response = {'result': dispatch_tool_call(call['name'], call['args'], schedule=schedule)}
             except (ValueError, KeyError) as exc:
-                raise ValueError(f"Could not apply '{call['name']}': {exc}") from exc
-            return {'answer': f"Applied {call['name']}: {result}", 'applied': True}
-        return {'answer': outcome.get('text') or 'The assistant did not return an answer.', 'applied': False}
+                response = {'error': str(exc)}
+            contents.append({'role': 'user',
+                             'parts': [{'functionResponse': {'name': call['name'], 'response': response}}]})
+        raise ValueError('The assistant could not resolve the request after several tool calls.')
 
 
 def run_request(payload: dict) -> dict:
