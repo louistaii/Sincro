@@ -7,11 +7,8 @@ provides a browser interface for uploading the eight instance CSV or Excel files
 **Validation is local, not a certification from the judges.** The reference
 `trackaccess` package, `02_references/`, and `03_submission_sample/` are not in
 this repository. The dependency-free solver is a deterministic heuristic;
-the optional OR-Tools backend proves the contract-final-delay
-objective, including an extended-horizon improvement check. Organiser-validator
-equivalence is unverified.
-Development tests, audits, and saved answer keys remain on the `dev` branch;
-this branch retains the deployment-only layout.
+the optional OR-Tools backend proves the inferred contract-completion objective
+within the modelled horizon. Organiser-validator equivalence is unverified.
 
 ## Run the web app
 
@@ -75,34 +72,12 @@ to 8080 if unset). Deploy with:
 gcloud run deploy sincro --source . --region <region> --allow-unauthenticated
 ```
 
-`requirements.txt` includes OR-Tools for Precision mode. The merged optimiser
-has no primary solve-time limit; the previous 90-second cap no longer applies.
-The HTTP request waits for the solve to complete, so hosting/proxy request
-limits can still interrupt a difficult instance. Configure and test deployment
-timeouts against representative uploads; long-running jobs may require an
-asynchronous worker. Precision does not silently downgrade to the heuristic.
-
-### Deployed-service safeguards
-
-The container defaults to one CP-SAT worker (`SINCRO_SOLVER_WORKERS=1`) to avoid
-mistaking shared-host CPU count for the instance's allocation. This changes
-parallelism, not the objective or optimality requirements. Each HTTP solve uses
-a fresh child process so native solver memory is released after the response.
-Only one solve runs per instance; overlapping requests receive a JSON 503 with
-`Retry-After`. The threaded HTTP listener continues serving `/healthz` and the
-homepage during optimisation. `/healthz` also identifies the service version.
-
-The browser requests A/B/C sequentially and preserves each completed result.
-Non-JSON gateway failures now show the HTTP error instead of a JSON parse error.
-These safeguards do not override Cloud Run memory or request-timeout limits;
-if HTTP 503/504 persists, inspect the revision's logs and resource settings.
-
-Deployment checks (plus the full development test suite on `dev`):
-
-```bash
-PYTHONPATH=src python -m unittest discover -s checks
-node checks/test_frontend.cjs
-```
+Cloud Run's default request timeout is 5 minutes (configurable up to 60 with
+`--timeout`), well past the 90 s per scenario (`EXACT_SECONDS_PER_SCENARIO`)
+that exact/optimal solving can take even across all three scenarios --
+unlike a serverless-function host, no code changes or timeout workarounds
+are needed. `requirements.txt` is stdlib-only by default; uncomment
+`ortools` there to enable exact solving in the deployed container.
 
 ## Generate and validate answer keys
 
@@ -113,7 +88,7 @@ PYTHONPATH=src python3 -m sincro.emit 01_data out all
 # Or generate one scenario to a chosen directory.
 PYTHONPATH=src python3 -m sincro.emit 01_data out/B B
 
-# Optimise contract-final delay penalties, then improve the
+# Optimise the contract-completion objective, then improve its
 # priority-weighted completion tie-break (pip install ortools).
 PYTHONPATH=src python3 -m sincro.emit 01_data out/optimal-a A --optimal
 
@@ -131,44 +106,69 @@ only when the complete submission passes. Generation validates a staged answer
 key before copying it into the output directory; a failed solve leaves existing
 answer keys untouched.
 
-## Public results and corrected penalty formula
+## Public results
 
-The current scoring formula is `contract-final-delay-v5`. For each contract:
+Regenerating the answer keys (see above) delivers all **54 activities / 192
+required work units** and passes every local hard constraint. Scores below use
+contract completion dates: every activity's priority multiplier is charged for
+its **contract's final lateness**, including activities that finished earlier.
+These are results under the documented local model, not reference-validator
+scores. Lower penalties are better.
 
-`delay penalty = final contract late days * sum(activity daily rates)`
+This interpretation exactly reproduces the organiser's reported **1028.3** for
+the previous A schedule. The former activity-finish objective gave 222.6 for A
+and 135.5 for C, so proving those objectives did not establish optimality under
+the organiser's scoring. The original brief is preserved unchanged; the current
+scoring formula is explicitly labelled `organiser-inferred-contract-v3`.
+The old metric remains available as `activity_finish_weighted_score` for audit.
 
-Each activity's daily rate is its contract tier weight (100/10/1) multiplied by
-its activity multiplier (1.3/1.2/1.0). All activities in a delayed contract
-contribute their rates, including siblings completed earlier. Contract overrun
-days are counted once per contract; weighted penalty therefore cannot be inferred
-from that day count alone.
+The organiser validator is unavailable. For the previous C artifact the inferred
+formula gives **578.6**, while the reported organiser score was **576.8**; that
+small discrepancy remains unverified. No organiser validation attempts were used.
 
-The unchanged saved schedules on `dev` now reproduce the expected values:
+| Scenario | Previous schedule, rescored locally | New local penalty | Contract overrun days | ECLO nights | Contracts late |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| A | 1028.3 | 1028.3 | 49 | 0 | 5 of 14 |
+| B | 60.0 | 60.0 | 0 | 12 | 0 of 14 |
+| C | 578.6 | 542.4 | 28 | 6 | 3 of 14 |
 
-| Scenario | Contract overrun days | Delay penalty | ECLO cost | Total penalty |
-| --- | ---: | ---: | ---: | ---: |
-| A | 49 | 1028.3 | 0 | 1028.3 |
-| B | 0 | 0 | 60 | 60 |
-| C | 28 | 558.6 | 20 | 578.6 |
+These are the `--optimal` schedules. All three primary objectives are proven
+for the local model's 30-week horizon; independent 60-week A/C solves reached the
+same values. C buys two more ECLO nights to concentrate delay in fewer contracts,
+reducing its inferred penalty by 36.2 (6.3%). A/B cannot improve within this
+model and horizon. A proof here does not certify the inaccessible organiser score.
+All three have zero excess location-nights and no Priority-1 contract overruns.
 
-There is no excess-access cost in these schedules. C's total includes four ECLO
-accesses at five points each. The former 222.6 for A and 135.5 total for C used
-a different, activity-own-delay formula and must not be shown as the intended
-penalty. `activity_finish_weighted_score` remains an explicitly separate
-diagnostic. `penalty_breakdown` exposes the actual components of the total.
+The optional exact backend produces these `--optimal` schedules. It first
+proves the inferred primary objective, fixes that value, and then spends up
+to 30 seconds improving priority-weighted completion time among equal primary
+solutions. Install it with `pip install ortools`; without it every entry point
+falls back to the heuristic and names that in its `solver` field.
 
-The optimiser, heuristic and validator now use the same contract-final objective.
-Existing schedule CSVs were not changed to perform this correction. Fresh
-optimisation can return a different valid schedule and a different penalty:
-the local-model primary minima are A 1028.3, B 60 and C 542.4. In particular,
-the saved C schedule's corrected 578.6 is a regression fixture, not a claim
-that it is optimal under the restored objective.
+The dependency-free fallback also improves when scored on this same basis:
 
-Precision proves the primary objective and checks a finite extended horizon
-before claiming global optimality within the implemented local model. Priority
-tie-breaking cannot worsen that primary penalty. Model/export score disagreement
-is rejected. These proofs do not establish equivalence to an inaccessible
-organiser validator on all inputs.
+| Scenario | Previous heuristic artifact | Improved heuristic | Exact |
+| --- | ---: | ---: | ---: |
+| A | 1702.4 | 1346.8 | 1028.3 |
+| B | 100.0 | 100.0 | 60.0 |
+| C | 1285.4 | 854.6 | 542.4 |
+
+No Priority-1 contract is late in any scenario, under either backend. Use the
+web app's **Optimise** engine, or `--optimal` when generating answer keys, for
+the best scores.
+
+The exact model now removes interchangeable possession labels. Under the
+existing weekly closure rules, every pair at a common location must already
+co-share; therefore each location-week uses at most one possession. Disjoint
+sites still require an actual shared location to waive buffer conflicts. This
+reduces search size without relaxing any hard rule. Differential tests compare
+both representations, including infeasible cases.
+
+The optimiser first minimises the contract-completion penalty, locks a proven
+value, and spends up to 30 seconds improving priority-weighted activity completion
+among equal primary solutions. Reports expose the local proof status, lower
+bound, gap, and horizon. A candidate whose model objective disagrees with its
+serialized validation score is rejected before any existing output is replaced.
 
 ### Which solver runs when
 
@@ -176,16 +176,15 @@ organiser validator on all inputs.
 | --- | --- |
 | `sincro.emit` (default) | heuristic |
 | `sincro.emit --optimal` | exact, no primary time cap, falls back to the heuristic |
-| `sincro.web` **Precision** | exact, no primary time cap, extended-horizon certificate |
-| `sincro.web` **Fast preview** | heuristic, explicitly not optimal |
+| `sincro.web` (judges' upload) | exact, 90 s per primary attempt, falls back |
 
-Install the exact backend with `pip install -r requirements.txt`.
+Install the exact backend by adding `ortools>=9.8` to `requirements.txt`.
 Fallbacks are named in the report's `solver` field. Controlled replanning requires
 the exact backend to preserve protected decisions.
 
 `horizon_weeks` is a starting point: if workload does not fit, the solver grows
-it and retries. A horizon-only optimum is not reported as global unless the
-strict-improvement certificate also succeeds. The priority tie-break uses
+it and retries. Optimality applies to the horizon actually solved; extending a
+feasible horizon can improve an arbitrary instance. The priority tie-break uses
 `horizon_start`, not the wall clock, so urgency weights do not change with the
 date on which the solver runs.
 
@@ -228,12 +227,9 @@ delays, retaining the best feasible incumbent. Geometry is reused across candida
   at most two consecutive calendar weeks per affected line. Cross-line Live
   ECLO must fit both windows.
 
-The objective sums, for each activity, its contract priority weight **100/10/1**
-times its activity multiplier **1.3/1.2/1.0** times **its contract's final late days**.
-Thus daily rates are 130/120/100 in tier 1, 13/12/10 in tier 2, and 1.3/1.2/1
-in tier 3; an activity nudge never crosses a tier's band. The exact model uses
-integer tenths to preserve these rates without rounding away small penalties.
-B/C add **7 per excess
+The objective uses contract priority weights **100/10/1**, multiplied by the
+activity multiplier **1.3/1.2/1.0**, summed across each contract and multiplied
+by its final overrun days. B/C add **7 per excess
 location-night** and **5 per ECLO access**; B excludes overrun from its soft score
 because lateness is a hard failure.
 
@@ -319,7 +315,7 @@ src/sincro/analyse.py      Capacity and optimistic critical-path analysis
 src/sincro/extract.py      Column-faithful CSV reader for standalone analysis
 src/sincro/priority.py     Legacy tunable and scenario-aware urgency rankings
 Dockerfile                Container image for Google Cloud Run
-requirements.txt          Runtime dependencies, including OR-Tools
+requirements.txt          Runtime dependencies for the deployed container (stdlib only)
 ```
 
 ```bash
