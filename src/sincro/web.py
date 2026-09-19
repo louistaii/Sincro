@@ -7,10 +7,14 @@ import csv
 import datetime as dt
 import io
 import json
+import logging
+import multiprocessing
 import posixpath
 import tempfile
+import threading
+import time
 import zipfile
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -29,6 +33,48 @@ INPUT_FILES = (
 )
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_WORKBOOK_UNCOMPRESSED = 32 * 1024 * 1024
+SERVICE_VERSION = 'solve-isolation-v1'
+SOLVE_SLOT = threading.BoundedSemaphore(1)
+
+
+def _solve_worker(payload, sender):
+    """A fresh process releases native solver memory after each request."""
+    try:
+        sender.send((run_request(payload), 200))
+    except (ValueError, KeyError, OSError, csv.Error) as exc:
+        sender.send(({'error': str(exc)}, 400))
+    except Exception:
+        logging.exception('Scheduling worker failed')
+        sender.send(({'error': 'Scheduling failed unexpectedly. Check the service logs.'}, 500))
+    finally:
+        sender.close()
+
+
+def run_isolated(payload):
+    context = multiprocessing.get_context('spawn')
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(target=_solve_worker, args=(payload, sender), daemon=True)
+    started = False
+    try:
+        process.start()
+        started = True
+        sender.close()
+        # Read before join: a large schedule can fill the IPC pipe.
+        try:
+            return receiver.recv()
+        except EOFError:
+            logging.error('Scheduling worker exited without a response')
+            return {'error': ('The optimisation worker stopped unexpectedly. '
+                              'Check Cloud Run memory limits and service logs.')}, 503
+    finally:
+        sender.close()
+        receiver.close()
+        if started:
+            process.join(timeout=5)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+            process.close()
 
 
 def _excel_date(value: str) -> str:
@@ -295,37 +341,66 @@ def run_request(payload: dict) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _json(self, response, status=200):
+        body = json.dumps(response).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        if status == 503:
+            self.send_header('Retry-After', '10')
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            logging.warning('Client disconnected before the response was delivered')
+
     def do_GET(self):
+        if self.path == '/healthz':
+            self._json({'status': 'ok', 'version': SERVICE_VERSION})
+            return
         if self.path != '/':
-            self.send_error(404)
+            self._json({'error': 'Not found'}, 404)
             return
         body = Path(__file__).with_name('web.html').read_bytes()
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(body)
 
     def do_POST(self):
         if self.path != '/solve':
-            self.send_error(404)
+            self._json({'error': 'Not found'}, 404)
             return
+        # Admit before reading uploads: concurrent 8 MB bodies must not crowd
+        # the optimisation worker out of a small container's memory budget.
+        if not SOLVE_SLOT.acquire(blocking=False):
+            self._json({'error': 'This instance is already optimising a schedule. Please retry shortly.'}, 503)
+            return
+        started = time.monotonic()
+        scenario_label = 'invalid'
         try:
+            self.connection.settimeout(30)
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= MAX_UPLOAD_BYTES:
                 raise ValueError('Upload must be between 1 byte and 8 MB')
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError('Expected an object containing scenario and files')
-            response, status = run_request(payload), 200
+            scenario_label = str(payload.get('scenario', 'all'))[:16]
+            response, status = run_isolated(payload)
         except (ValueError, KeyError, OSError, csv.Error) as exc:
             response, status = {'error': str(exc)}, 400
-        body = json.dumps(response).encode('utf-8')
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        except Exception:
+            logging.exception('Scheduling request failed')
+            response, status = {'error': 'Scheduling service failed. Check the service logs.'}, 500
+        finally:
+            SOLVE_SLOT.release()
+            logging.warning('Solve completed: scenario=%s elapsed_seconds=%.2f',
+                            scenario_label, time.monotonic() - started)
+        self._json(response, status)
 
 
 def main():
@@ -334,7 +409,7 @@ def main():
     parser.add_argument('--port', type=int, default=8000)
     args = parser.parse_args()
     try:
-        with HTTPServer((args.host, args.port), Handler) as server:
+        with ThreadingHTTPServer((args.host, args.port), Handler) as server:
             print(f'Sincro is available at http://{args.host}:{args.port}', flush=True)
             server.serve_forever()
     except KeyboardInterrupt:

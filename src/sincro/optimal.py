@@ -22,6 +22,7 @@ schedule.
 from __future__ import annotations
 
 import datetime as dt
+import gc
 import os
 from collections import defaultdict
 from dataclasses import dataclass
@@ -43,7 +44,18 @@ UNBOUNDED_EXCESS_HEADROOM = 2
 
 # Match the box rather than assuming eight cores: oversubscribing CP-SAT's
 # workers on a small container costs more in contention than it buys.
-SEARCH_WORKERS = max(1, min(8, os.cpu_count() or 1))
+def _search_workers() -> int:
+    # Cloud containers can expose host CPUs rather than their CPU quota.
+    # Each CP-SAT worker also consumes memory. Never infer eight workers from
+    # a shared host when the service may have only one allocated vCPU.
+    default = 1 if os.environ.get('K_SERVICE') else max(1, min(8, os.cpu_count() or 1))
+    value = int(os.environ.get('SINCRO_SOLVER_WORKERS', default))
+    if not 1 <= value <= 64:
+        raise ValueError('SINCRO_SOLVER_WORKERS must be between 1 and 64')
+    return value
+
+
+SEARCH_WORKERS = _search_workers()
 
 # How far past the declared horizon the model may reach when the workload does
 # not fit, and in what steps.
@@ -465,6 +477,10 @@ def solve_exact(inst: Instance, scenario: str, *, as_of_date: dt.date | None = N
             result['certificate_horizon_weeks'] = certificate_horizon
             result['global_proven'] = certificate_horizon <= horizon
             if certificate_horizon > horizon:
+                # The incumbent is already extracted. Do not retain the first
+                # model/solver while allocating the larger certificate model.
+                del s, m, primary, secondary, parts
+                gc.collect()
                 cm, cp, cs, cparts = _build(
                     inst, policy, certificate_horizon, as_of_date,
                     schedule_constraints, compact=True)

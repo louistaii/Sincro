@@ -82,6 +82,28 @@ limits can still interrupt a difficult instance. Configure and test deployment
 timeouts against representative uploads; long-running jobs may require an
 asynchronous worker. Precision does not silently downgrade to the heuristic.
 
+### Deployed-service safeguards
+
+The container defaults to one CP-SAT worker (`SINCRO_SOLVER_WORKERS=1`) to avoid
+mistaking shared-host CPU count for the instance's allocation. This changes
+parallelism, not the objective or optimality requirements. Each HTTP solve uses
+a fresh child process so native solver memory is released after the response.
+Only one solve runs per instance; overlapping requests receive a JSON 503 with
+`Retry-After`. The threaded HTTP listener continues serving `/healthz` and the
+homepage during optimisation. `/healthz` also identifies the service version.
+
+The browser requests A/B/C sequentially and preserves each completed result.
+Non-JSON gateway failures now show the HTTP error instead of a JSON parse error.
+These safeguards do not override Cloud Run memory or request-timeout limits;
+if HTTP 503/504 persists, inspect the revision's logs and resource settings.
+
+Deployment checks (plus the full development test suite on `dev`):
+
+```bash
+PYTHONPATH=src python -m unittest discover -s checks
+node checks/test_frontend.cjs
+```
+
 ## Generate and validate answer keys
 
 ```bash
