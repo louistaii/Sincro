@@ -102,13 +102,13 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
             'properties': {
                 'activity_id': {'type': 'string', 'description': 'New unique activity id, e.g. A090'},
                 'contract_number': {'type': 'string', 'description': 'Existing contract number, e.g. C001'},
-                'activity_type': {'type': 'string', 'description': 'e.g. Renewal, Construction'},
+                'activity_type': {'type': 'string', 'description': 'Activity type from the selected existing contract'},
                 'start_location_id': {'type': 'string', 'description': 'Location id where the activity starts'},
                 'end_location_id': {'type': 'string', 'description': 'Location id where the activity ends'},
                 'total_accesses': {'type': 'integer', 'description': 'Total planned access nights'},
                 'planned_start_date': {'type': 'string', 'description': 'ISO date, e.g. 2027-03-15'},
                 'predecessor_activity_id': {'type': 'string', 'description': 'Optional predecessor activity id'},
-                'activity_priority': {'type': 'integer', 'description': '1 (highest) to 3 (lowest)'},
+                'activity_priority': {'type': 'integer', 'description': '1 (highest) to 3 (lowest); defaults to 2'},
             },
             'required': ['activity_id', 'contract_number', 'activity_type', 'start_location_id',
                          'end_location_id', 'total_accesses', 'planned_start_date'],
@@ -127,7 +127,7 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 'total_accesses': {'type': 'integer', 'description': 'New total planned access nights'},
                 'planned_start_date': {'type': 'string', 'description': 'Optional new ISO planned start date'},
             },
-            'required': ['activity_id', 'total_accesses'],
+            'required': ['activity_id'],
         },
     },
     {
@@ -144,7 +144,7 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 'total_accesses': {'type': 'integer', 'description': 'New total planned days for the contract'},
                 'planned_completion_date': {'type': 'string', 'description': 'Optional new ISO completion date'},
             },
-            'required': ['contract_number', 'total_accesses'],
+            'required': ['contract_number'],
         },
     },
     {
@@ -163,10 +163,70 @@ TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 'access_seq': {'type': 'integer', 'description': 'Access sequence number within that activity'},
                 'as_of_date': {'type': 'string', 'description': 'ISO date the change is being made, e.g. today'},
             },
-            'required': ['activity_id', 'week', 'access_seq', 'as_of_date'],
+            'required': ['activity_id', 'week', 'access_seq'],
         },
     },
 ]
+
+
+def prepare_tool_change(name: str, arguments: dict[str, Any], *, inst: Instance,
+                        as_of_date: str) -> tuple[dict, str]:
+    """Validate a model proposal and translate it to the shared /solve protocol.
+
+    This deliberately does not execute a mutation. All proposals go through one
+    controlled solve, so a rejected proposal can never partly update a plan.
+    """
+    declaration = next((tool for tool in TOOL_DECLARATIONS if tool['name'] == name), None)
+    if declaration is None:
+        raise ValueError(f'Unknown assistant tool {name!r}')
+    if not isinstance(arguments, dict):
+        raise ValueError(f'{name} arguments must be an object')
+    schema = declaration['parameters']
+    missing = set(schema['required']) - set(arguments)
+    extra = set(arguments) - set(schema['properties'])
+    if missing or extra:
+        raise ValueError(f'{name} has missing or unsupported arguments: {", ".join(sorted(missing | extra))}')
+    args = dict(arguments)
+    for key, value in args.items():
+        expected = schema['properties'][key]['type']
+        if expected == 'integer':
+            if type(value) is not int or value < 1 or value > 100_000:
+                raise ValueError(f'{key} must be a positive whole number no greater than 100000')
+        elif not isinstance(value, str) or len(value) > 1000:
+            raise ValueError(f'{key} must be text of at most 1000 characters')
+        elif not value.strip() and key != 'predecessor_activity_id':
+            raise ValueError(f'{key} must not be blank')
+        if key.endswith('_date'):
+            try:
+                dt.date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(f'{key} must be a valid ISO date') from exc
+    if name == 'add_activity':
+        args.setdefault('activity_priority', 2)
+        args.setdefault('predecessor_activity_id', '')
+        if args['activity_priority'] not in (1, 2, 3):
+            raise ValueError('activity_priority must be 1, 2 or 3')
+        change = {'kind': 'append', 'activities': [args]}
+    elif name == 'edit_activity':
+        activity = inst.activities.get(args['activity_id'])
+        if activity is None:
+            raise ValueError(f'Unknown activity {args["activity_id"]}')
+        if 'total_accesses' not in args and 'planned_start_date' not in args:
+            raise ValueError('An activity edit needs a new workload or start date')
+        args.setdefault('total_accesses', activity.total_accesses)
+        change = {'kind': 'edit_activity', **args}
+    elif name == 'edit_contract':
+        if args['contract_number'] not in inst.contracts:
+            raise ValueError(f'Unknown contract {args["contract_number"]}')
+        if 'total_accesses' not in args and 'planned_completion_date' not in args:
+            raise ValueError('A contract edit needs a new workload or completion date')
+        args.setdefault('total_accesses', sum(a.total_accesses for a in inst.activities.values()
+                                            if a.contract_number == args['contract_number']))
+        change = {'kind': 'edit_contract', **args}
+    else:
+        as_of_date = args.pop('as_of_date', as_of_date)
+        change = {'kind': 'postpone', **args}
+    return change, as_of_date
 
 
 # ---------------------------------------------------------------------------

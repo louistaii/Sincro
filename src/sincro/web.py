@@ -11,22 +11,19 @@ import os
 import posixpath
 import tempfile
 import zipfile
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from .change_control import apply_changes, build_schedule_constraints, parse_append_csv
+from .assistant import (MAX_PROMPT_CHARS, normalise_changes, plan_links, snapshot_token,
+                        source_digest, validate_history, validate_plans, workspace_context)
+from .change_control import apply_changes, build_schedule_constraints
 from .emit import emit
 from .gemini_client import DEFAULT_MODEL, GeminiError, call_gemini_with_tools
-from .gemini_tools import TOOL_DECLARATIONS, dispatch_tool_call
+from .gemini_tools import TOOL_DECLARATIONS, prepare_tool_change
 from .instance import load_instance
 
 DATA = Path(__file__).resolve().parents[2] / '01_data'
-
-# Model is fixed to Gemini 2.5 Flash; change DEFAULT_MODEL in gemini_client.py
-# (or override via the GEMINI_MODEL environment variable below) to use a
-# different Gemini model.
-ASK_MODEL = os.environ.get('GEMINI_MODEL', DEFAULT_MODEL)
 
 # An upload must answer promptly. Give CP-SAT this long per scenario to prove
 # the optimum; past it, emit() falls back to the heuristic rather than hang.
@@ -37,6 +34,38 @@ INPUT_FILES = (
 )
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_WORKBOOK_UNCOMPRESSED = 32 * 1024 * 1024
+
+
+def load_environment() -> None:
+    """Load the two optional Gemini settings without a dotenv dependency.
+
+    Explicit process settings take precedence. Values are never evaluated or
+    expanded as shell commands; other keys in the local file are ignored.
+    """
+    path = DATA.parent / '.env'
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding='utf-8').splitlines():
+        key, separator, value = line.strip().removeprefix('export ').partition('=')
+        key, value = key.strip(), value.strip()
+        if separator and key in ('GEMINI_API_KEY', 'GEMINI_MODEL'):
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            if value:
+                os.environ.setdefault(key, value)
+
+
+def assistant_status() -> dict:
+    return {'configured': bool(os.environ.get('GEMINI_API_KEY', '').strip()),
+            'model': os.environ.get('GEMINI_MODEL') or DEFAULT_MODEL}
+
+
+def _source_contents(files: object) -> dict[str, str]:
+    if files is not None and (not isinstance(files, dict) or set(files) != set(INPUT_FILES)
+                              or any(not isinstance(value, (str, dict)) for value in files.values())):
+        raise ValueError('Upload exactly the eight named instance CSV or XLSX files')
+    return {name: _input_text(files[name]) if files is not None else (DATA / name).read_text()
+            for name in INPUT_FILES}
 
 
 def _excel_date(value: str) -> str:
@@ -186,57 +215,101 @@ def _calendar_exports(inst, scenario: str, access: list[dict]) -> tuple[str, str
 
 def run_ask_request(payload: dict) -> dict:
     prompt = payload.get('prompt')
-    if not isinstance(prompt, str) or not prompt.strip():
-        raise ValueError('prompt must be a non-empty string')
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_PROMPT_CHARS:
+        raise ValueError('prompt must be a non-empty string of at most 8000 characters')
     scenario = payload.get('scenario', 'all')
     if scenario not in ('A', 'B', 'C', 'all'):
         raise ValueError('Choose scenario A, B, C or all')
-    files = payload.get('files')
-    if files is not None and (not isinstance(files, dict) or set(files) != set(INPUT_FILES)
-                              or any(not isinstance(value, (str, dict)) for value in files.values())):
-        raise ValueError('Upload exactly the eight named instance CSV or XLSX files')
+    contents = _source_contents(payload.get('files'))
+    plans = validate_plans(payload.get('plans', {}), source_digest(contents))
+    history = validate_history(payload.get('history', []))
+    try:
+        as_of_date = dt.date.fromisoformat(str(payload.get('as_of_date', dt.date.today().isoformat()))).isoformat()
+    except ValueError as exc:
+        raise ValueError('Change received date must be a valid date') from exc
     with tempfile.TemporaryDirectory(prefix='sincro-ask-') as tmp:
         data = Path(tmp) / 'instance'
         data.mkdir()
-        for name in INPUT_FILES:
-            content = _input_text(files[name]) if files is not None else (DATA / name).read_text()
+        for name, content in contents.items():
             (data / name).write_text(content, encoding='utf-8')
         inst = load_instance(data)
-        system_instruction = (
-            'You are the scheduling assistant embedded in Sincro, a rail access planning tool. '
-            f'The loaded instance has {len(inst.activities)} activities across {len(inst.contracts)} contracts, '
-            f'over a {inst.horizon_weeks}-week horizon starting {inst.horizon_start.isoformat()}. '
-            f'The currently selected scenario is {scenario}. '
-            'Answer questions about the schedule concisely. If the user asks to add, edit, or postpone '
-            'planned work, call the matching tool instead of just describing it.'
-        )
-        try:
-            outcome = call_gemini_with_tools(
-                prompt, TOOL_DECLARATIONS, model=ASK_MODEL, system_instruction=system_instruction)
-        except GeminiError as exc:
-            raise ValueError(str(exc)) from exc
-        if 'function_call' in outcome:
-            call = outcome['function_call']
-            try:
-                result = dispatch_tool_call(call['name'], call['args'], data_dir=data, inst=inst, baseline=None)
-            except (ValueError, KeyError) as exc:
-                raise ValueError(f"Could not apply '{call['name']}': {exc}") from exc
-            return {'answer': f"Applied {call['name']}: {result}", 'applied': True}
-        return {'answer': outcome.get('text') or 'The assistant did not return an answer.', 'applied': False}
+        selected = plans.get(scenario)
+        can_change = bool(selected and 'error' not in selected['result']
+                          and selected['result'].get('report', {}).get('feasible'))
+        outcome = call_gemini_with_tools(
+            prompt, TOOL_DECLARATIONS if can_change else [],
+            model=assistant_status()['model'], history=history,
+            system_instruction=workspace_context(inst, plans, scenario, as_of_date,
+                'public example' if payload.get('files') is None else 'uploaded files'))
+        if not isinstance(outcome, dict):
+            raise ValueError('The assistant returned an invalid response. Try again.')
+        calls = outcome.get('function_calls')
+        if calls is None:
+            calls = [outcome['function_call']] if 'function_call' in outcome else []
+        if not isinstance(calls, list) or len(calls) > 8:
+            raise ValueError('The assistant can apply at most eight changes per message')
+        if not calls:
+            return {'answer': outcome.get('text') or 'The assistant did not return an answer. Try rephrasing.',
+                    'applied': False, 'provider': 'gemini', 'links': plan_links(plans, scenario)}
+        if not can_change:
+            raise ValueError('Select one successfully generated scenario before requesting a change')
+        cumulative = selected['changes']
+        if cumulative:
+            apply_changes(data, cumulative)
+            inst = load_instance(data)
+        baseline = [{'activity_id': activity['id'], **night}
+                    for activity in selected['result']['activities'] for night in activity['nights']]
+        new_changes = []
+        new_notices = []
+        dates = set()
+        for call in calls:
+            if not isinstance(call, dict) or not isinstance(call.get('name'), str):
+                raise ValueError('The assistant returned an invalid change request')
+            change, change_date = prepare_tool_change(call['name'], call.get('args'),
+                                                     inst=inst, as_of_date=as_of_date)
+            if call['name'] == 'postpone_access':
+                dates.add(change_date)
+            # Stage and fully parse each proposal before any scheduling. This
+            # also lets later tools reference work appended in the same message.
+            notices = apply_changes(data, [change])
+            if change['kind'] == 'postpone':
+                notices.append(f'Postponed {change["activity_id"]} access {change["access_seq"]} '
+                               f'from week {change["week"]}')
+            new_notices.extend(notices)
+            inst = load_instance(data)
+            new_changes.append(change)
+        if len(dates) > 1:
+            raise ValueError('Use one change received date for all changes in a message')
+        effective_date = next(iter(dates), as_of_date)
+        cumulative = cumulative + new_changes
+        revised = run_request({'files': contents, 'scenario': scenario, 'optimal': True,
+                               'changes': cumulative, 'schedule_changes': new_changes,
+                               'baseline': baseline, 'as_of_date': effective_date})
+        result = revised['results'][0]
+        if result.get('error') or not result.get('report', {}).get('feasible'):
+            raise ValueError('The change could not produce a validated schedule; your current plan is unchanged. '
+                             + result.get('error', 'Local validation failed.'))
+        description = '; '.join(new_notices)
+        revision = result['revision']
+        answer = (f'Scenario {scenario} updated and locally validated. {description}. '
+                  f'{revision["protected_accesses"]} accesses protected through {revision["frozen_until"]}; '
+                  f'{revision["changed_accesses"]} access placements changed. '
+                  f'New penalty: {result["report"]["soft_scores"]["objective_score"]}. '
+                  'The calendar, timeline, contract summary, validation and downloads now reflect this plan.')
+        return {'answer': answer, 'applied': True, 'provider': 'gemini', 'scenario': scenario,
+                'data': revised, 'changes': cumulative, 'links': plan_links(plans, scenario)}
 
 
 def run_request(payload: dict) -> dict:
     scenario = payload.get('scenario', 'all')
     if scenario not in ('A', 'B', 'C', 'all'):
         raise ValueError('Choose scenario A, B, C or all')
-    files = payload.get('files')
-    if files is not None and (not isinstance(files, dict) or set(files) != set(INPUT_FILES)
-                              or any(not isinstance(value, (str, dict)) for value in files.values())):
-        raise ValueError('Upload exactly the eight named instance CSV or XLSX files')
+    contents = _source_contents(payload.get('files'))
+    digest = source_digest(contents)
     optimal = payload.get('optimal', False)
     if not isinstance(optimal, bool):
         raise ValueError('optimal must be true or false')
-    changes = payload.get('changes') or []
+    changes = normalise_changes(payload.get('changes', []))
     schedule_changes = payload.get('schedule_changes')
     baseline = payload.get('baseline')
     change_metadata = None
@@ -244,19 +317,9 @@ def run_request(payload: dict) -> dict:
     if changes:
         if scenario == 'all':
             raise ValueError('Apply changes to one scenario at a time')
-        if not isinstance(changes, list):
-            raise ValueError('changes must be a list')
-        expanded = []
-        for change in changes:
-            if isinstance(change, dict) and change.get('kind') == 'append_csv':
-                expanded.append({'kind': 'append', 'activities': parse_append_csv(str(change.get('csv', '')))})
-            else:
-                expanded.append(change)
-        changes = expanded
         if schedule_changes is None:
             schedule_changes = changes
-        if not isinstance(schedule_changes, list):
-            raise ValueError('schedule_changes must be a list')
+        schedule_changes = normalise_changes(schedule_changes)
         try:
             as_of_date = dt.date.fromisoformat(str(payload.get('as_of_date', dt.date.today().isoformat())))
         except ValueError as exc:
@@ -266,8 +329,7 @@ def run_request(payload: dict) -> dict:
         root = Path(tmp)
         data = root / 'instance'
         data.mkdir()
-        for name in INPUT_FILES:
-            content = _input_text(files[name]) if files is not None else (DATA / name).read_text()
+        for name, content in contents.items():
             (data / name).write_text(content, encoding='utf-8')
         if changes:
             change_notices = apply_changes(data, changes)
@@ -275,7 +337,8 @@ def run_request(payload: dict) -> dict:
         schedule_constraints = None
         if changes:
             schedule_constraints, change_metadata = build_schedule_constraints(
-                inst, baseline, schedule_changes, as_of_date)
+                inst, baseline, schedule_changes, as_of_date,
+                unavailable_accesses=[change for change in changes if change.get('kind') == 'postpone'])
         results = []
         for choice in ('A', 'B', 'C') if scenario == 'all' else (scenario,):
             output = root / choice
@@ -303,6 +366,8 @@ def run_request(payload: dict) -> dict:
                     'type': c.access_type, 'nature': c.nature_of_activity,
                     'start_location': a.start_location_id, 'end_location': a.end_location_id,
                     'start_date': a.planned_start_date.isoformat(), 'locations': inst.span_locations(a),
+                    'closure_locations': sorted(inst.closure_footprint(a)),
+                    'affected_lines': sorted(inst.affected_lines(a)),
                     'predecessor': a.predecessor_activity_id, 'nights': nights, 'workload': a.total_accesses,
                     'overrun_days': max(0, (inst.week_end(finish) - c.planned_completion_date).days)})
             contracts = []
@@ -313,6 +378,9 @@ def run_request(payload: dict) -> dict:
                 contracts.append({'id': number, 'description': contract.description,
                                   'priority': contract.contract_priority, 'access_type': contract.access_type,
                                   'nature': contract.nature_of_activity,
+                                  'activity_type': contract.activity_type,
+                                  'workfronts': contract.number_of_workfronts,
+                                  'max_access_per_week': contract.max_access_per_week,
                                   'due_date': contract.planned_completion_date.isoformat(),
                                   'completion_date': completion,
                                   'activities': len(members),
@@ -336,6 +404,8 @@ def run_request(payload: dict) -> dict:
                             'download': base64.b64encode(buffer.getvalue()).decode('ascii'),
                             'calendar': base64.b64encode(calendar.encode()).decode('ascii'),
                             'summary': base64.b64encode(summary.encode()).decode('ascii')})
+        for result in results:
+            result['context_token'] = snapshot_token(result, changes, digest)
         return {'results': results, 'horizon_start': inst.horizon_start.isoformat(), 'horizon_weeks': inst.horizon_weeks,
                 'activity_count': len(inst.activities), 'contract_count': len(inst.contracts),
                 'locations': sorted(inst.locations),
@@ -344,6 +414,9 @@ def run_request(payload: dict) -> dict:
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == '/assistant-status':
+            self._json_response(assistant_status(), 200)
+            return
         if self.path != '/':
             self.send_error(404)
             return
@@ -367,23 +440,30 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('Expected an object containing scenario and files')
             handler = run_ask_request if self.path == '/ask' else run_request
             response, status = handler(payload), 200
-        except (ValueError, KeyError, OSError, csv.Error) as exc:
+        except GeminiError as exc:
+            response, status = {'error': str(exc)}, 503
+        except (ValueError, KeyError, TypeError, OSError, csv.Error) as exc:
             response, status = {'error': str(exc)}, 400
+        self._json_response(response, status)
+
+    def _json_response(self, response: dict, status: int):
         body = json.dumps(response).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(body)
 
 
 def main():
+    load_environment()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8000)
     args = parser.parse_args()
     try:
-        with HTTPServer((args.host, args.port), Handler) as server:
+        with ThreadingHTTPServer((args.host, args.port), Handler) as server:
             print(f'Sincro is available at http://{args.host}:{args.port}', flush=True)
             server.serve_forever()
     except KeyboardInterrupt:
