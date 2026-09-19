@@ -1,5 +1,6 @@
-# The web app runs on the standard library alone.
-# Add ortools>=9.8 here to enable exact CP-SAT solving instead of the heuristic
-# fallback. Cloud Run's container size and request-timeout limits comfortably
-# fit it; adjust --timeout in the deploy command if you enable exact mode for
-# multi-scenario ("all") runs, since each scenario can take up to 90s.
+# The web app runs on the standard library alone; ortools below enables exact
+# CP-SAT solving instead of the heuristic fallback. Cloud Run's container size
+# and request-timeout limits comfortably fit it; adjust --timeout in the
+# deploy command if a multi-scenario ("all") run is needed, since each
+# scenario can take up to 90s.
+ortools>=9.8
