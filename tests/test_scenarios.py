@@ -18,7 +18,7 @@ from sincro.validate import validate
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
     "A": {
-        "objective_score": 1028.3,
+        "objective_score": 222.6,
         "overrun_days_total": 49,
         "contracts_overrunning": 5,
         "excess_access_nights_total": 0,
@@ -32,11 +32,11 @@ EXPECTED = {
         "eclo_nights_total": 12,
     },
     "C": {
-        "objective_score": 542.4,
+        "objective_score": 135.5,
         "overrun_days_total": 28,
-        "contracts_overrunning": 3,
+        "contracts_overrunning": 4,
         "excess_access_nights_total": 0,
-        "eclo_nights_total": 6,
+        "eclo_nights_total": 4,
     },
 }
 
@@ -45,6 +45,17 @@ class OptimalArtifactTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.instance = load_instance(ROOT / "01_data")
+
+    def test_a_local_score_is_not_conflated_with_tester_matching_diagnostic(self) -> None:
+        report = validate(self.instance, ROOT / "out" / "optimal-a", "A")
+        self.assertTrue(report['feasible'], report['hard_violations'])
+        scores = report['soft_scores']
+        # The user reports 1028.3 externally for this completion pattern.
+        # A matching diagnostic is evidence, not certified tester equivalence.
+        self.assertEqual(scores['objective_score'], 222.6)
+        self.assertEqual(scores['contract_finish_weighted_score'], 1028.3)
+        self.assertEqual(scores['overrun_days_total'], 49)
+        self.assertEqual(scores['contracts_overrunning'], 5)
 
     def test_all_optimal_artifacts_are_feasible_and_match_proven_scores(self) -> None:
         for scenario, expected in EXPECTED.items():
@@ -154,15 +165,17 @@ class ExactSolverTests(unittest.TestCase):
 
         instance = load_instance(ROOT / "01_data")
         cases = (
-            ("A", 10283.0, 192),
-            ("B", 600.0, 186),
-            ("C", 5424.0, 189),
+            ("A", 2226.0, 192, 59),
+            ("B", 600.0, 186, 30),
+            ("C", 1355.0, 190, 47),
         )
-        for scenario, expected_objective, expected_nights in cases:
+        for scenario, expected_objective, expected_nights, certificate_horizon in cases:
             with self.subTest(scenario=scenario):
                 result = solve_exact(instance, scenario, secondary_seconds=1)
                 self.assertEqual(result["objective"], expected_objective)
                 self.assertTrue(result["proven"])
+                self.assertTrue(result["global_proven"])
+                self.assertEqual(result["certificate_horizon_weeks"], certificate_horizon)
                 self.assertEqual(result["best_bound"], expected_objective)
                 self.assertGreater(result["priority_objective"], 0)
                 self.assertEqual(len(result["placements"]), expected_nights)
@@ -207,7 +220,7 @@ class ExactSolverPolicyTests(unittest.TestCase):
         self.assertGreater(result["horizon_weeks"], 20)
         # The declared horizon was an artificial cap, so the true optimum is
         # unchanged by lifting it.
-        self.assertEqual(result["objective"], 10283.0)
+        self.assertEqual(result["objective"], 2226.0)
         self.assertEqual(len(result["finish_week"]), len(squeezed.activities))
         # A tie-break that runs out of budget still returns the proven
         # schedule, so it must report that schedule's own priority value

@@ -1,4 +1,14 @@
-# Current scoring and optimisation update
+# Current scoring: user-confirmed activity-own-delay
+
+The user explicitly confirmed charging **each activity's own late days**.
+The solver and all scorers now use `activity-own-delay-v4`: tier weight times
+activity multiplier times that activity's lateness. Regenerated primary optima
+are **A 222.6 / B 60.0 / C 135.5**, certified under the local model, including
+extended-horizon improvement checks. See
+[the current report](docs/PRIORITY_RECALCULATION.md). Everything below is a
+historical review, including the superseded contract-based interpretation.
+
+# Historical contract-based scoring update
 
 The historical review below used activity-finish lateness. The organiser's
 reported A score of **1028.3** instead matches charging all activity weights

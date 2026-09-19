@@ -204,18 +204,17 @@ def validate(inst: Instance, sub_dir: str | Path, scenario: str | None = None) -
         contract_fin[c.contract_number] = max(contract_fin.get(c.contract_number, 0), fin)
         days = max(0, (inst.week_end(fin) - c.planned_completion_date).days)
         activity_weighted += CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority]) * days
+        tier_days[c.contract_priority] += days
     dates = {cn: inst.week_end(wk) for cn, wk in contract_fin.items()}
     overruns = {cn: max(0, (date - inst.contracts[cn].planned_completion_date).days) for cn, date in dates.items()}
-    # The organiser's reported A score prices every activity against its
-    # contract's final completion, including activities finished earlier.
-    # Keep the former activity-finish interpretation visible as a diagnostic.
+    # Retain the previous contract-final calculation as an explicitly named
+    # diagnostic. The configured objective charges each activity's own delay.
     for aid, wks in weeks_of.items():
         if not wks:
             continue
         a = inst.activities[aid]
         c = inst.contracts[a.contract_number]
         days = overruns[a.contract_number]
-        tier_days[c.contract_priority] += days
         weighted += CONTRACT_WEIGHT[c.contract_priority] * (1 + ACTIVITY_NUDGE[a.activity_priority]) * days
     if scenario == 'B':
         for cn, days in sorted(overruns.items()):
@@ -246,13 +245,14 @@ def validate(inst: Instance, sub_dir: str | Path, scenario: str | None = None) -
                                    for cn, date in dates.items()),
         'excess_access_nights_total': excess, 'eclo_nights_total': eclo_nights,
         'priority_overrun': {str(k): v for k, v in sorted(tier_days.items()) if v},
-        'priority_weighted_score': round(weighted, 1),
+        'priority_weighted_score': round(activity_weighted, 1),
         'activity_finish_weighted_score': round(activity_weighted, 1),
+        'contract_finish_weighted_score': round(weighted, 1),
     }
     if not violations:
-        soft['objective_score'] = round((weighted if scenario != 'B' else 0)
+        soft['objective_score'] = round((activity_weighted if scenario != 'B' else 0)
                                        + (7 * excess + 5 * eclo_nights if scenario != 'A' else 0), 1)
-        soft['formula_version'] = 'organiser-inferred-contract-v3'
+        soft['formula_version'] = 'activity-own-delay-v4'
     return {'scenario': scenario, 'feasible': not violations, 'hard_violations': violations,
             'soft_scores': soft, 'detail': {'capacity_hotspots': hotspots,
             'nights_scheduled': len(tables['SCHEDULE_ACCESS.csv']), 'eclo_nights': eclo_nights}}

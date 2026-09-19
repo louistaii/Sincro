@@ -7,7 +7,7 @@ whether ECLO is legal, whether planned dates are hard, whether overrun is
 scored, how much capacity excess is tolerated, and whether ECLO nights must sit
 inside one window per line. That lives in ``ScenarioPolicy``.
 
-Each solve is lexicographic: prove the inferred contract-completion objective first,
+Each solve is lexicographic: prove the activity-own-delay objective first,
 lock it, then spend the remaining freedom minimising priority-weighted
 completion so that, among equally-scoring schedules, urgent work finishes
 earlier.
@@ -81,6 +81,10 @@ POLICIES = {
 class ExactSolveFailed(RuntimeError):
     """CP-SAT produced no schedule; the caller should fall back."""
 
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
 
 def _role(inst: Instance, aid: str) -> dict:
     access = inst.contracts[inst.activities[aid].contract_number].access_type
@@ -107,6 +111,21 @@ def _default_as_of(inst: Instance) -> dt.date:
     emitted schedule -- depend on which day the solver happened to run.
     """
     return inst.horizon_start
+
+
+def _strict_improvement_horizon(inst: Instance, incumbent: int) -> int:
+    """Return a finite horizon containing every schedule beating an incumbent."""
+    target = incumbent - 1
+    if target < 0:
+        return inst.horizon_weeks
+    latest = []
+    for activity in inst.activities.values():
+        contract = inst.contracts[activity.contract_number]
+        weight = round(SCALE * rules.CONTRACT_WEIGHT[contract.contract_priority]
+                       * (1 + rules.ACTIVITY_NUDGE[activity.activity_priority]))
+        deadline_offset = (contract.planned_completion_date - inst.horizon_start).days
+        latest.append((deadline_offset + 1 + target // weight) // 7)
+    return max([inst.horizon_weeks, *latest])
 
 
 def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.date,
@@ -308,18 +327,16 @@ def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.
             fin = m.new_int_var(1, horizon, f"finish_contract_{c.contract_number}")
             contract_finish[c.contract_number] = fin
             m.add_max_equality(fin, [finish_vars[a] for a in members])
-            # The contract-level formula inferred from the organiser's reported
-            # score prices every member against the final contract completion,
-            # including activities finished earlier. Individual finish penalties
-            # optimise a different score.
-            weight = sum(rules.CONTRACT_WEIGHT[c.contract_priority]
-                         * (1 + rules.ACTIVITY_NUDGE[inst.activities[a].activity_priority])
-                         for a in members)
-            values = [0] + [round(SCALE * weight * max(
-                0, (inst.week_end(w) - c.planned_completion_date).days)) for w in weeks]
-            p = m.new_int_var(0, max(values), f"penalty_contract_{c.contract_number}")
-            m.add_element(fin, values, p)
-            penalties.append(p)
+            # Each activity pays only for its own delay. Contract completion
+            # remains useful reporting data but cannot penalise on-time siblings.
+            for a in members:
+                weight = round(SCALE * rules.CONTRACT_WEIGHT[c.contract_priority]
+                               * (1 + rules.ACTIVITY_NUDGE[inst.activities[a].activity_priority]))
+                values = [0] + [weight * max(
+                    0, (inst.week_end(w) - c.planned_completion_date).days) for w in weeks]
+                p = m.new_int_var(0, max(values), f"penalty_activity_{a}")
+                m.add_element(finish_vars[a], values, p)
+                penalties.append(p)
 
     primary = sum(penalties)
     if policy.allow_eclo:
@@ -346,7 +363,7 @@ def _solve_lexicographic(m, primary, secondary, policy, primary_seconds, seconda
     status = first.solve(m)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise ExactSolveFailed(
-            f"Scenario {policy.name}: {first.status_name(status)}")
+            f"Scenario {policy.name}: {first.status_name(status)}", status)
     proven = status == cp_model.OPTIMAL
     primary_value = round(first.objective_value)
     best_bound = first.best_objective_bound
@@ -408,6 +425,13 @@ def solve_exact(inst: Instance, scenario: str, *, as_of_date: dt.date | None = N
     protected_horizon = max((week for _, week in
                              (schedule_constraints or {}).get('fixed', {})), default=0)
     horizon = max(inst.horizon_weeks, protected_horizon)
+    if policy.hard_planned_date:
+        # A short declared horizon must not exclude on-time choices that fall
+        # before a contract's actual deadline. No feasible B access can occur
+        # after the latest such week, so this also bounds the global proof.
+        horizon = max(horizon, max((
+            (c.planned_completion_date - inst.horizon_start).days + 1) // 7
+            for c in inst.contracts.values()))
     last: ExactSolveFailed | None = None
 
     for attempt in range(MAX_HORIZON_ATTEMPTS):
@@ -429,7 +453,42 @@ def solve_exact(inst: Instance, scenario: str, *, as_of_date: dt.date | None = N
         result.update(objective=value, priority_objective=tie, proven=proven,
                       priority_proven=tie_proven, horizon_weeks=horizon,
                       extended=horizon != inst.horizon_weeks, best_bound=best_bound,
-                      primary_wall_seconds=primary_wall_seconds)
+                      primary_wall_seconds=primary_wall_seconds,
+                      global_proven=proven and not policy.score_overrun,
+                      certificate_horizon_weeks=horizon)
+        # Feasibility at the declared horizon is not a global certificate:
+        # cheap work may move later and release scarce early capacity for an
+        # expensive contract. Search the finite horizon that contains every
+        # schedule capable of strictly beating this proven incumbent.
+        if policy.score_overrun and proven:
+            certificate_horizon = _strict_improvement_horizon(inst, round(value))
+            result['certificate_horizon_weeks'] = certificate_horizon
+            result['global_proven'] = certificate_horizon <= horizon
+            if certificate_horizon > horizon:
+                cm, cp, cs, cparts = _build(
+                    inst, policy, certificate_horizon, as_of_date,
+                    schedule_constraints, compact=True)
+                cm.add(cp <= round(value) - 1)
+                try:
+                    certified = _solve_lexicographic(
+                        cm, cp, cs, policy, None, secondary_seconds)
+                except ExactSolveFailed as exc:
+                    if exc.status != cp_model.INFEASIBLE:
+                        raise
+                    result['global_proven'] = True
+                else:
+                    (cert_solver, cert_value, cert_tie, cert_proven,
+                     cert_tie_proven, cert_bound, cert_seconds) = certified
+                    result = _extract(inst, cert_solver, cparts)
+                    result.update(
+                        objective=cert_value, priority_objective=cert_tie,
+                        proven=cert_proven, global_proven=cert_proven,
+                        priority_proven=cert_tie_proven,
+                        horizon_weeks=certificate_horizon,
+                        certificate_horizon_weeks=certificate_horizon,
+                        extended=certificate_horizon != inst.horizon_weeks,
+                        best_bound=cert_bound, primary_wall_seconds=cert_seconds,
+                    )
         return result
     raise last or ExactSolveFailed(f"Scenario {scenario}: no schedule found")
 
