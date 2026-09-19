@@ -1,9 +1,0 @@
-# The solver core and the web app run on the standard library alone.
-#
-# Installing this unlocks the exact CP-SAT backend, which proves the Section
-# 2.5 objective instead of approximating it (public instance: 222.6/60/135.5
-# against the heuristic's 381.5/100/293.5). Without it every entry point falls
-# back to the heuristic and says so in its `solver` field.
-#
-#   pip install -r requirements-optional.txt
-ortools>=9.8

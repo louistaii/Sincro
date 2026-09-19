@@ -163,7 +163,8 @@ def apply_changes(data_dir: Path, changes: list[dict]) -> list[str]:
 
 
 def build_schedule_constraints(inst: Instance, baseline: list[dict], changes: list[dict],
-                               as_of_date: dt.date) -> tuple[dict, dict]:
+                               as_of_date: dt.date, *,
+                               unavailable_accesses: list[dict] | None = None) -> tuple[dict, dict]:
     """Freeze the 14-day window and apply the same-contract notice exception."""
     if not isinstance(baseline, list) or not baseline:
         raise ValueError('A current schedule is required before applying changes')
@@ -227,6 +228,18 @@ def build_schedule_constraints(inst: Instance, baseline: list[dict], changes: li
     for aid, week, _ in postponed:
         fixed[aid, week] = None
 
+    # Access sequence numbers can change after a replan. Earlier postponements
+    # therefore retain their unavailable activity/week, without replaying their
+    # old sequence numbers or notice exceptions against today's baseline.
+    unavailable = set()
+    for change in unavailable_accesses or []:
+        aid = str(change.get('activity_id', ''))
+        week = _positive_int(change.get('week'), 'Previously postponed week')
+        if aid not in inst.activities:
+            raise ValueError(f'Unknown previously postponed activity {aid}')
+        unavailable.add((aid, week))
+        fixed[aid, week] = None
+
     # Give an immediate, specific error instead of an opaque infeasible solve.
     locked_work: dict[str, int] = {}
     for (aid, _), row in fixed.items():
@@ -241,5 +254,6 @@ def build_schedule_constraints(inst: Instance, baseline: list[dict], changes: li
         'as_of_date': as_of_date.isoformat(), 'frozen_until': cutoff.isoformat(),
         'protected_accesses': sum(row is not None for row in fixed.values()),
         'relaxed_contracts': sorted(relaxed_contracts), 'policies': policies,
+        'unavailable_accesses': len(unavailable),
     }
     return {'fixed': fixed}, metadata

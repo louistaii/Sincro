@@ -7,7 +7,7 @@ whether ECLO is legal, whether planned dates are hard, whether overrun is
 scored, how much capacity excess is tolerated, and whether ECLO nights must sit
 inside one window per line. That lives in ``ScenarioPolicy``.
 
-Each solve is lexicographic: prove the official Section 2.5 objective first,
+Each solve is lexicographic: prove the inferred contract-completion objective first,
 lock it, then spend the remaining freedom minimising priority-weighted
 completion so that, among equally-scoring schedules, urgent work finishes
 earlier.
@@ -110,11 +110,18 @@ def _default_as_of(inst: Instance) -> dt.date:
 
 
 def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.date,
-           schedule_constraints: dict | None = None):
+           schedule_constraints: dict | None = None, *, compact: bool = False):
     """Assemble the shared model. Returns the pieces the caller needs."""
     m = cp_model.CpModel()
     aids, weeks = list(inst.activities), range(1, horizon + 1)
-    groups = _possessions_per_location(inst, policy)
+    # Under the existing weekly closure rules, activities occupying a common
+    # location must co-share. Consequently a location-week can contain only one
+    # possession. Relabelling every possession to zero preserves all constraints:
+    # disjoint sites still need a real shared location to waive their buffers.
+    # Removing these interchangeable labels cuts the search dramatically without
+    # admitting any additional schedule. Keep the expanded representation for
+    # differential checks and tests that explicitly constrain possession labels.
+    groups = range(1) if compact else _possessions_per_location(inst, policy)
 
     # A night is either standard (worth 2 half-units) or ECLO (worth 3).
     normal = {(a, w, g): m.new_bool_var(f"n_{a}_{w}_{g}")
@@ -288,21 +295,31 @@ def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.
     # ---- objective terms ----
     penalties, finish_vars = [], {}
     for a in aids:
-        act = inst.activities[a]
-        c = inst.contracts[act.contract_number]
         fin = m.new_int_var(1, horizon, f"finish_{a}")
         finish_vars[a] = fin
-        for w in weeks:
-            m.add(fin >= w * active[a, w])
-        if not policy.score_overrun:
-            continue
-        weight = (rules.CONTRACT_WEIGHT[c.contract_priority]
-                  * (1 + rules.ACTIVITY_NUDGE[act.activity_priority]))
-        values = [0] + [round(SCALE * weight * max(0, (inst.week_end(w) - c.planned_completion_date).days))
-                        for w in weeks]
-        p = m.new_int_var(0, max(values), f"penalty_{a}")
-        m.add_element(fin, values, p)
-        penalties.append(p)
+        # Exact completion dates keep even time-limited feasible incumbents'
+        # objective values aligned with their exported access rows.
+        m.add_max_equality(fin, [w * active[a, w] for w in weeks])
+
+    contract_finish = {}
+    if policy.score_overrun:
+        for c in inst.contracts.values():
+            members = [a for a in aids if inst.activities[a].contract_number == c.contract_number]
+            fin = m.new_int_var(1, horizon, f"finish_contract_{c.contract_number}")
+            contract_finish[c.contract_number] = fin
+            m.add_max_equality(fin, [finish_vars[a] for a in members])
+            # The contract-level formula inferred from the organiser's reported
+            # score prices every member against the final contract completion,
+            # including activities finished earlier. Individual finish penalties
+            # optimise a different score.
+            weight = sum(rules.CONTRACT_WEIGHT[c.contract_priority]
+                         * (1 + rules.ACTIVITY_NUDGE[inst.activities[a].activity_priority])
+                         for a in members)
+            values = [0] + [round(SCALE * weight * max(
+                0, (inst.week_end(w) - c.planned_completion_date).days)) for w in weeks]
+            p = m.new_int_var(0, max(values), f"penalty_contract_{c.contract_number}")
+            m.add_element(fin, values, p)
+            penalties.append(p)
 
     primary = sum(penalties)
     if policy.allow_eclo:
@@ -315,11 +332,12 @@ def _build(inst: Instance, policy: ScenarioPolicy, horizon: int, as_of_date: dt.
 
     return m, primary, secondary, dict(
         aids=aids, weeks=weeks, groups=groups, active=active,
-        normal=normal, eclo=eclo, night=night, allow_eclo=policy.allow_eclo)
+        normal=normal, eclo=eclo, night=night, allow_eclo=policy.allow_eclo,
+        finish_vars=finish_vars, contract_finish=contract_finish)
 
 
 def _solve_lexicographic(m, primary, secondary, policy, primary_seconds, secondary_seconds):
-    """Prove the official objective, lock it, then optimise the tie-break."""
+    """Prove the local objective, lock it, then optimise the tie-break."""
     m.minimize(primary)
     first = cp_model.CpSolver()
     first.parameters.num_search_workers = SEARCH_WORKERS
@@ -331,11 +349,14 @@ def _solve_lexicographic(m, primary, secondary, policy, primary_seconds, seconda
             f"Scenario {policy.name}: {first.status_name(status)}")
     proven = status == cp_model.OPTIMAL
     primary_value = round(first.objective_value)
+    best_bound = first.best_objective_bound
+    primary_wall_seconds = first.wall_time
 
     # Without a proof, locking the objective could exclude better schedules.
     # Report the tie-break value of the schedule actually being returned.
     if not proven:
-        return first, float(primary_value), float(first.value(secondary)), False, False
+        return (first, float(primary_value), float(first.value(secondary)), False,
+                False, best_bound, primary_wall_seconds)
 
     m.add(primary == primary_value)
     # Seed the tie-break solve with the proven schedule; possession and night
@@ -351,9 +372,10 @@ def _solve_lexicographic(m, primary, secondary, policy, primary_seconds, seconda
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         # The tie-break pass ran out of budget. The proven schedule still
         # stands; report its own tie-break value rather than a nominal zero.
-        return first, float(primary_value), float(first.value(secondary)), True, False
+        return (first, float(primary_value), float(first.value(secondary)), True,
+                False, best_bound, primary_wall_seconds)
     return (second, float(primary_value), second.objective_value, True,
-            status == cp_model.OPTIMAL)
+            status == cp_model.OPTIMAL, best_bound, primary_wall_seconds)
 
 
 def _extract(inst: Instance, s, parts) -> dict:
@@ -390,23 +412,24 @@ def solve_exact(inst: Instance, scenario: str, *, as_of_date: dt.date | None = N
 
     for attempt in range(MAX_HORIZON_ATTEMPTS):
         m, primary, secondary, parts = _build(
-            inst, policy, horizon, as_of_date, schedule_constraints)
+            inst, policy, horizon, as_of_date, schedule_constraints, compact=True)
         try:
-            s, value, tie, proven, tie_proven = _solve_lexicographic(
+            s, value, tie, proven, tie_proven, best_bound, primary_wall_seconds = _solve_lexicographic(
                 m, primary, secondary, policy, primary_seconds, secondary_seconds)
         except ExactSolveFailed as exc:
             last = exc
             if not policy.may_extend_horizon or attempt == MAX_HORIZON_ATTEMPTS - 1:
                 raise
-            # The workload may simply not fit in the weeks declared. Later
-            # weeks only ever add penalty, so growing cannot change the
-            # optimum of an instance that already fitted.
+            # The workload may simply not fit in the weeks declared. The proof
+            # applies to the returned modelling horizon: allowing more weeks can
+            # in general let cheap work move later and free expensive work sooner.
             horizon = max(horizon + 1, int(horizon * HORIZON_GROWTH))
             continue
         result = _extract(inst, s, parts)
         result.update(objective=value, priority_objective=tie, proven=proven,
                       priority_proven=tie_proven, horizon_weeks=horizon,
-                      extended=horizon != inst.horizon_weeks)
+                      extended=horizon != inst.horizon_weeks, best_bound=best_bound,
+                      primary_wall_seconds=primary_wall_seconds)
         return result
     raise last or ExactSolveFailed(f"Scenario {scenario}: no schedule found")
 

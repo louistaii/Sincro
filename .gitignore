@@ -5,6 +5,7 @@ Thumbs.db
 # Editors and IDEs
 .idea/
 .vscode/
+.vs/
 *.swp
 *.swo
 
@@ -32,3 +33,5 @@ build/
 dist/
 coverage/
 *.log
+
+out/

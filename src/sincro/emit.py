@@ -75,6 +75,26 @@ def emit(data_dir: str, out_dir: str, scenario: str = 'A', *, optimal: bool = Fa
         report = validate(inst, staging, scenario)
         if not report['feasible']:
             raise SchedulingError(f"Candidate failed local validation: {report['hard_violations'][:5]}")
+        if 'objective' in result:
+            from .optimal import SCALE
+
+            value = result['objective'] / SCALE
+            checked = report['soft_scores']['objective_score']
+            if abs(value - checked) > 0.05:
+                raise SchedulingError(
+                    f'Solver objective {value} differs from validated score {checked}')
+            bound = result.get('best_bound')
+            bound = bound / SCALE if bound is not None else None
+            report['optimisation'] = {
+                'proven': result['proven'],
+                'objective': checked,
+                'lower_bound': bound,
+                'absolute_gap': round(max(0.0, checked - bound), 1) if bound is not None else None,
+                'horizon_weeks': result.get('horizon_weeks', inst.horizon_weeks),
+                'primary_seconds': result.get('primary_wall_seconds'),
+                'priority_proven': result.get('priority_proven', False),
+                'scope': 'local model and reported horizon; organiser score inferred from reported results',
+            }
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         for name in SCHEMAS:
@@ -89,7 +109,7 @@ def main() -> None:
     parser.add_argument('out_dir')
     parser.add_argument('scenario', choices=['A', 'B', 'C', 'all'], nargs='?', default='A')
     parser.add_argument('--optimal', action='store_true',
-                        help='prove the official objective, then optimise its priority tie-break')
+                        help='optimise contract completion, then improve the priority tie-break')
     args = parser.parse_args()
     try:
         for scenario in ('A', 'B', 'C') if args.scenario == 'all' else (args.scenario,):
