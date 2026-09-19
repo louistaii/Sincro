@@ -65,6 +65,69 @@ The server binds to localhost by default. This is a local application, not yet a
 hosted submission URL. Public hosting still needs a deployment environment and
 an appropriate production server/proxy.
 
+### Planning assistant
+
+The **Sincro assistant** connects Gemini to the current planning workspace. It
+answers questions about uploaded demand, activities, contracts, predecessors,
+locations and closures, capacity, delays, ECLO, local validation and scenario
+trade-offs. Each conversation has links to the relevant schedule views and
+downloads. Before a solve, it can explain the inputs and product rules.
+
+To enable it, copy `.env.example` to `.env` in the repository root, set
+`GEMINI_API_KEY` to your Google AI Studio key, and restart the web app. The server
+loads this file without extra packages; existing environment variables take
+precedence. `GEMINI_MODEL` optionally overrides `gemini-3.5-flash`. Keep the key
+on the server. Without a key, scheduling and downloads still work, and the
+assistant shows its configuration status.
+
+Generate a schedule, open the assistant, then choose **All scenarios** to compare
+the displayed results or one scenario to discuss or change it. For example:
+
+- “Compare the loaded scenarios and their trade-offs.”
+- “Which contracts are late in Scenario A, and what are their completion dates?”
+- “Summarise ECLO use and the main risks for a handover brief.”
+- “Increase A001's total workload to 4 access days.”
+- “Move A001's planned start to 2027-03-01, keeping its workload.”
+- “Postpone A001 access 1 from week 5.” (Use an access that exists in your plan.)
+
+Use **Change received on** to set the date for the existing 14-day stability
+policy. An explicit append/edit/postpone request is applied to the selected
+scenario only after an exact replan passes local validation. The calendar,
+timeline, contract summary, validation and ZIP/ICS/CSV exports refresh together.
+Failed proposals leave the displayed plan unchanged. Date-only edits retain
+workload; postponement keeps the workload and finds a replacement rather than
+deleting work. Hypothetical questions are answered without requesting changes.
+Previously postponed activity/weeks stay unavailable during later chat or manual
+edits, even when replanning renumbers the remaining access sequences.
+Exact replanning requires the optional OR-Tools installation.
+
+The assistant uses the displayed plan, including earlier manual and chat edits.
+Selecting different upload files does not change that context until a new solve
+succeeds. A new solve resets conversations; browser reload clears the workspace.
+Signed result snapshots bind chat context to its source files and amendment
+history. After restarting the server, generate the schedule again. The bundled
+server uses one process; snapshots are not shared across separate worker
+processes. Uploads and conversations are not retained in a server database.
+
+Sending a question shares the source demand, displayed schedule data and up to
+20 messages from that conversation with the configured Gemini service. Credentials
+and download archives are excluded. Requests and model output are bounded, and
+provider errors return readable messages without exposing keys or raw API errors.
+The model explains the supplied evidence; it cannot certify organiser-validator
+equivalence or prove a delay's cause from lateness alone.
+
+`GET /assistant-status` reports availability without exposing credentials.
+`POST /ask` accepts `prompt`, `scenario`, `files`, `plans` (current signed result
+and cumulative `changes` per scenario), `history`, and `as_of_date`. Answers return
+`answer`, `applied` and view `links`; successful changes also return `scenario`,
+updated `changes`, and `data` with the same results/exports as `POST /solve`.
+Model calls are mocked in the automated tests; no API key is needed to run them.
+With optional Node.js, Playwright and Chromium available, run
+`node tests/assistant_ui.cjs` for browser integration checks with mocked HTTP
+responses. `SINCRO_BROWSER_EXECUTABLE` can point to an existing Chromium binary;
+`NODE_PATH` can point to an external Playwright installation. These are development
+tools only; the application adds no JavaScript or AI SDK runtime dependencies.
+
 ## Generate and validate answer keys
 
 ```bash
@@ -293,6 +356,9 @@ src/sincro/emit.py         Three-file output, validated before publication
 src/sincro/validate.py     Local submission checker and scenario scoring
 src/sincro/web.py          Upload/solve/download service
 src/sincro/web.html        Browser interface and access timeline
+src/sincro/assistant.py    Grounded assistant context and signed plan snapshots
+src/sincro/gemini_client.py  Bounded Gemini transport and conversation history
+src/sincro/gemini_tools.py   Validated proposals for the shared change-control flow
 src/sincro/analyse.py      Capacity and optimistic critical-path analysis
 src/sincro/report.py       Human-readable instance diagnostics
 src/sincro/feasibility_probe.py  Earliest-start pressure probe
