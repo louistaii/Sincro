@@ -21,7 +21,27 @@ from .gemini_client import DEFAULT_MODEL, GeminiError, call_gemini_with_tools
 from .gemini_tools import TOOL_DECLARATIONS, dispatch_tool_call
 from .instance import load_instance
 
-DATA = Path(__file__).resolve().parents[2] / '01_data'
+ROOT = Path(__file__).resolve().parents[2]
+DATA = ROOT / '01_data'
+
+
+def _load_dotenv(path: Path) -> None:
+    """Populate os.environ from a .env file without adding a dependency."""
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv(ROOT / '.env')
 
 # Model is fixed to Gemini 2.5 Flash; change DEFAULT_MODEL in gemini_client.py
 # (or override via the GEMINI_MODEL environment variable below) to use a
